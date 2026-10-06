@@ -136,7 +136,8 @@ agent_runs       id, user_id, graph, started_at, finished_at, status, summary_js
 Notes:
 - `plaid_txn_id` is unique so re-syncing is idempotent (upsert).
 - `/transactions/sync` returns `added`, `modified`, `removed`; handle all three. Pending transactions get replaced by posted ones with a new id.
-- Plaid amounts are **positive for money leaving the account**. Decide your sign convention once and document it here.
+- Plaid amounts are **positive for money leaving the account**.
+- **Sign convention (decided):** `transactions.amount_cents` keeps Plaid's sign as-is: **positive = money out** (purchases, bills, transfers out), **negative = money in** (paychecks, refunds, transfers in). Store Plaid's amount converted to cents without flipping it. When summing spending for a category, add up the positive amounts, and flip the sign only when displaying.
 
 ---
 
