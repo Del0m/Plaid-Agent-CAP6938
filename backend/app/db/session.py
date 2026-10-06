@@ -1,6 +1,12 @@
 import os
+from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
+
+# load the repo-root .env (same file main.py loads) before reading DATABASE_URL,
+# so alembic and scripts see it even when main.py isn't imported
+load_dotenv(Path(__file__).parent.parent.parent.parent / ".env")
 
 # relative sqlite path, so run the app and alembic from backend/
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dev.db")

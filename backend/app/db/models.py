@@ -5,7 +5,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
 # Money is always integer cents (Mapped[int]), never float.
-# Sign convention: amount_cents follows Plaid, positive = money leaving the account.
+# Sign convention: amount_cents follows Plaid, positive = money leaving the account
+# (see docs/architecture.md section 5).
 
 # get current time
 def utcnow() -> datetime:

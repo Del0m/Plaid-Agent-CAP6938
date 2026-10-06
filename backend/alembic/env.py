@@ -5,6 +5,7 @@ from sqlalchemy import pool
 
 from alembic import context
 
+from app.db.base import UTCDateTime
 from app.db.models import Base  # importing models registers every table on Base.metadata
 from app.db.session import DATABASE_URL
 
@@ -23,6 +24,13 @@ if config.config_file_name is not None:
 # add your model's MetaData object here
 # for 'autogenerate' support
 target_metadata = Base.metadata
+
+
+# render app column types as plain sqlalchemy types so migrations don't import app code
+def render_item(type_, obj, autogen_context):
+    if type_ == "type" and isinstance(obj, UTCDateTime):
+        return "sa.DateTime(timezone=True)"
+    return False
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
@@ -49,6 +57,8 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,
+        render_item=render_item,
+        compare_type=True,
     )
 
     with context.begin_transaction():
@@ -74,6 +84,8 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             render_as_batch=True,
+            render_item=render_item,
+            compare_type=True,
         )
 
         with context.begin_transaction():
