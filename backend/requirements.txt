@@ -4,3 +4,4 @@ httpx
 uvicorn
 sqlalchemy>=2
 alembic
+cryptography

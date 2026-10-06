@@ -14,7 +14,6 @@ env = os.getenv("PLAID_ENV", "sandbox")
 
 if not client_id or not secret:
     sys.exit("Missing PLAID_CLIENT_ID or PLAID_SECRET in backend/.env")
-
 resp = httpx.post(
     f"https://{env}.plaid.com/link/token/create",
     json={
