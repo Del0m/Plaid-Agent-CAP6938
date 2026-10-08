@@ -39,6 +39,23 @@ def test_link_token_requires_only_transactions(client, monkeypatch):
     assert sent["required_if_supported_products"] == ["liabilities"]
 
 
+# plaid only sends SYNC_UPDATES_AVAILABLE to items created with a webhook url,
+# so the link token carries PLAID_WEBHOOK_URL when it's set and omits it otherwise
+@pytest.mark.parametrize("url", ["https://example.ngrok.app/plaid/webhook", None])
+def test_link_token_sets_webhook_only_when_configured(client, monkeypatch, url):
+    sent = {}
+
+    def fake_post(path, body):
+        sent.update(body)
+        return {"link_token": "link-sandbox-test"}
+
+    monkeypatch.setattr(plaid, "plaid_post", fake_post)
+    monkeypatch.setattr(config, "PLAID_WEBHOOK_URL", url)
+
+    assert client.post("/plaid/link-token").status_code == 200
+    assert sent.get("webhook") == url
+
+
 # linking a new bank creates one active row with the access_token encrypted
 def test_first_link_stores_item(client, db, monkeypatch):
     fake_exchange(monkeypatch, "item-1", "access-1")
