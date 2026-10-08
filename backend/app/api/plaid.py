@@ -2,6 +2,8 @@ import logging
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from ..db.models import PlaidItem, User
 from ..db.session import get_session
@@ -57,11 +59,27 @@ def exchange_public_token(
     except (PlaidError, httpx.HTTPError) as err:
         raise _plaid_failure(err)
 
+    # item already stored (Link re-run for a connected bank): keep the newest token on
+    # the same row, but never touch another user's item
+    existing = session.scalar(select(PlaidItem).where(PlaidItem.plaid_item_id == plaid_item_id))
+    if existing is not None:
+        if existing.user_id != user.id:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail="item already linked")
+        existing.access_token_enc = encrypt(access_token)
+        existing.status = "active"
+        session.commit()
+        return ExchangeResponse(item_id=existing.id)
+
     item = PlaidItem(
         user_id=user.id,
         plaid_item_id=plaid_item_id,
         access_token_enc=encrypt(access_token),
     )
     session.add(item)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        # a concurrent exchange inserted the same item between our check and commit
+        session.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="item already linked")
     return ExchangeResponse(item_id=item.id)

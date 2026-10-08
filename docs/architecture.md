@@ -309,6 +309,7 @@ Only in Sandbox. Plaid's Transfer product needs separate approval for production
 - **Sandbox time travel:** Sandbox won't produce new transactions on its own the way a real bank does. For the daily loop, either call `/sandbox/transactions/create` (for dynamic sandbox users) or load the next day's slice from a synthetic fixture. Wrap both behind `POST /admin/sandbox/advance` so you can simulate a month in a minute.
 - **Run graphs by hand:** every graph should be callable from a CLI (`python -m app.agents.budget --user demo --date 2026-11-03`) before you put it on a schedule.
 - **Visualize the graph:** `graph.get_graph().draw_mermaid()` prints the LangGraph structure. Compare it to `budget-agent-loop.png`.
+- **Document every test (required):** each pytest module in `backend/tests/` has a Markdown file with the same name in `docs/tests/` (`test_plaid.py` → `docs/tests/test_plaid.md`). Every test function gets an entry saying what it does and why it's there, meaning the bug, requirement or design rule it protects. Put shared fixtures and helpers at the top of the file and known gaps in a "Not covered" section. Update the doc in the same change that adds, removes or changes a test, and don't count a test as done until it has an entry. Run tests from `backend/` with `../venv/bin/python -m pytest`.
 - **LangSmith (optional):** free tier tracing shows each node's inputs/outputs. Very helpful when debugging tool calls. Mind privacy: traces contain prompts.
 
 ---
@@ -320,6 +321,7 @@ plaid-agent/
 ├── README.md
 ├── docs/
 │   ├── architecture.md          # this file
+│   ├── tests/                   # one .md per test module: what each test does and why (section 12)
 │   └── diagrams/*.puml
 ├── frontend/                    # Next.js
 │   ├── app/                     # routes: /, /dashboard, /chat, /goals
@@ -441,6 +443,7 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-04 | Agent `llama3.1:8b`, judge `qwen2.5:14b` (Ollama, M5 24 GB) | Reliable tool calling at 8B; judge from a different model family; both fit in memory together |
 | 2026-10-04 | `mistral` (7B) included as a comparison agent model in benchmarks | Already installed; gives a model-vs-model results table |
 | 2026-10-04 | Use Plaid's primary `personal_finance_category` values as budget categories | No mapping layer to maintain; LLM only categorizes what Plaid leaves unclear |
+| 2026-10-08 | Every test is documented in `docs/tests/<module>.md` (what it does, why it exists) | Teammates and graders can tell what each test checks, and nobody has to guess why a regression test exists |
 | | | |
 
 ---

@@ -38,7 +38,10 @@ def create_link_token(client_user_id: str) -> str:
         "language": "en",
         "country_codes": ["US"],
         "user": {"client_user_id": client_user_id},
-        "products": ["transactions", "liabilities"],
+        # link only shows banks supporting every entry in products, so liabilities
+        # goes here instead: enabled where the bank has it, without hiding banks that don't
+        "products": ["transactions"],
+        "required_if_supported_products": ["liabilities"],
         # fixed when the item is created; the initial budget needs ~90 days (section 6.3)
         "transactions": {"days_requested": 90},
     })
