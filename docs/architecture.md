@@ -322,6 +322,7 @@ plaid-agent/
 ├── docs/
 │   ├── architecture.md          # this file
 │   ├── tests/                   # one .md per test module: what each test does and why (section 12)
+│   ├── tests/                   # one .md per test module: what each test does and why (section 12)
 │   └── diagrams/*.puml
 ├── frontend/                    # Next.js
 │   ├── app/                     # routes: /, /dashboard, /chat, /goals
