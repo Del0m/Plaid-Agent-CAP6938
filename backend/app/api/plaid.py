@@ -1,6 +1,6 @@
 import logging
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -9,6 +9,8 @@ from ..db.models import PlaidItem, User
 from ..db.session import get_session
 from ..plaid_service import client as plaid
 from ..plaid_service.client import PlaidError
+from ..plaid_service.sync import sync_item
+from ..plaid_service.webhooks import handle_webhook
 from ..security import encrypt
 from .deps import get_current_user
 
@@ -83,3 +85,32 @@ def exchange_public_token(
         session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="item already linked")
     return ExchangeResponse(item_id=item.id)
+
+
+# pull everything for one of the current user's items; safe to call repeatedly
+@router.post("/items/{item_id}/sync")
+def sync_one_item(
+    item_id: int,
+    user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    item = session.get(PlaidItem, item_id)
+    # someone else's item looks the same as a missing one, so ids can't be probed
+    if item is None or item.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="item not found")
+    try:
+        return sync_item(session, item)
+    except (PlaidError, httpx.HTTPError) as err:
+        raise _plaid_failure(err)
+
+
+# plaid calls this, not a user, so there's no get_current_user.
+# TODO: verify the Plaid-Verification JWT before trusting the payload
+@router.post("/webhook")
+def plaid_webhook(
+    payload: dict,
+    background: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    handle_webhook(payload, session, background)
+    return {"status": "ok"}

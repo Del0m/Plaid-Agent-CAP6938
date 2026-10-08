@@ -3,7 +3,7 @@ import os
 from cryptography.fernet import Fernet
 
 # app.security fails at import without a key; a throwaway one is fine for tests.
-# setdefault so a real .env key still wins (load_dotenv never overrides set vars)
+# setdefault uses a fake throwaway key
 os.environ.setdefault("FERNET_KEY", Fernet.generate_key().decode())
 
 import pytest

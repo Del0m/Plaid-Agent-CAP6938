@@ -61,12 +61,13 @@ class Account(Base):
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account")
 
 # debt details for an account (credit card, student loan, mortgage)
+# one row per account, so account_id is unique and refreshing liabilities is an upsert
 class Liability(Base):
     __tablename__ = "liabilities"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), index=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.id"), unique=True, index=True)
     kind: Mapped[str] = mapped_column(Enum("credit", "student", "mortgage", name="liability_kind"))
     apr: Mapped[Optional[float]]                            # a percentage, not money, so float is fine
     min_payment_cents: Mapped[Optional[int]]

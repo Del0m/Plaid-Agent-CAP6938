@@ -27,6 +27,12 @@ The test file has two helpers:
 
 **Why it's there:** Link only lists institutions that support everything in `products`. Putting `liabilities` there hides every bank that has Transactions but not Liabilities. Under `required_if_supported_products`, those banks still show up, and liabilities is still enabled at banks that have it. If someone moves liabilities back into `products`, this test fails.
 
+## `test_link_token_sets_webhook_only_when_configured`
+
+**What it does:** Parametrized over a webhook URL and `None`. It sets `config.PLAID_WEBHOOK_URL`, calls `POST /plaid/link-token`, and checks that the body sent to Plaid has `webhook` set to that URL, or has no `webhook` key when it's unset.
+
+**Why it's there:** Plaid only sends `SYNC_UPDATES_AVAILABLE` to items that were created with a webhook URL, and the URL is fixed when the item is linked. If the link token drops the URL, new transactions stop arriving without any error. Sending an empty URL when none is configured would be rejected by Plaid.
+
 ## `test_first_link_stores_item`
 
 **What it does:** Exchanges a token for an item we haven't seen before. It checks that the response is 200 with the new row's id, and that there's exactly one row with the right `plaid_item_id` and `status == "active"`. It also checks that `access_token_enc` isn't the plaintext token but decrypts back to it.

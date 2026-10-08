@@ -33,7 +33,7 @@ def plaid_post(path: str, body: dict) -> dict:
 # link token for the frontend's Link widget
 # client_user_id must be a stable random id, never an email (architecture.md section 7)
 def create_link_token(client_user_id: str) -> str:
-    data = plaid_post("/link/token/create", {
+    body = {
         "client_name": "Plaid Agent",
         "language": "en",
         "country_codes": ["US"],
@@ -44,7 +44,11 @@ def create_link_token(client_user_id: str) -> str:
         "required_if_supported_products": ["liabilities"],
         # fixed when the item is created; the initial budget needs ~90 days (section 6.3)
         "transactions": {"days_requested": 90},
-    })
+    }
+    # items only get SYNC_UPDATES_AVAILABLE webhooks if a URL is set when they're created
+    if config.PLAID_WEBHOOK_URL:
+        body["webhook"] = config.PLAID_WEBHOOK_URL
+    data = plaid_post("/link/token/create", body)
     return data["link_token"]
 
 # trade the short-lived public_token from Link for the permanent access_token
@@ -54,9 +58,12 @@ def exchange_public_token(public_token: str) -> tuple[str, str]:
 
 # sandbox only: get a public_token without the Link UI (First Platypus Bank by default)
 def sandbox_public_token(institution_id: str = "ins_109508") -> str:
+    options = {"transactions": {"days_requested": 90}}
+    if config.PLAID_WEBHOOK_URL:
+        options["webhook"] = config.PLAID_WEBHOOK_URL
     data = plaid_post("/sandbox/public_token/create", {
         "institution_id": institution_id,
         "initial_products": ["transactions", "liabilities"],
-        "options": {"transactions": {"days_requested": 90}},
+        "options": options,
     })
     return data["public_token"]
