@@ -5,3 +5,4 @@ uvicorn
 sqlalchemy>=2
 alembic
 cryptography
+pytest
