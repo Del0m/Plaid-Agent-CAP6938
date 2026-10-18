@@ -239,9 +239,9 @@ git commit -m "feat(TPC-11): add GET /dashboard with net worth and APR-sorted de
 
 From the repo root: `npx create-next-app@latest frontend --ts --app --tailwind --eslint --no-src-dir --import-alias "@/*" --use-npm` (accept defaults for anything else it asks; if a flag is rejected by the installed version, answer the matching prompt instead). Then `cd frontend && npm install react-plaid-link recharts`. Delete the starter content in `app/page.tsx`.
 
-- [ ] **Step 2: Proxy and redirect**
+- [ ] **Step 2: Proxy, redirect, LAN script**
 
-`next.config.ts` adds the `rewrites()` shown in the spec. `app/page.tsx` is a server component that calls `redirect("/dashboard")` from `next/navigation`.
+`next.config.ts` adds the `rewrites()` shown in the spec. `package.json` adds the script `"start:lan": "next start -H 0.0.0.0"`. `app/page.tsx` is a server component that calls `redirect("/dashboard")` from `next/navigation`.
 
 - [ ] **Step 3: `lib/format.ts`**
 
@@ -314,7 +314,7 @@ git commit -m "feat(TPC-11): scaffold Next.js frontend with /api proxy and typed
 - `onLinked` sets `notice` and calls `load()`.
 - The unsynced notice's "Retry sync" button is disabled while `retrying` (Review Focus 5). It calls `syncItem(itemId)` then `load()`. On success it clears the notice. On failure it keeps the notice and shows the error.
 
-Use plain Tailwind layout: `max-w-5xl mx-auto p-6 space-y-6`, card sections with `rounded-lg border p-4`.
+Use plain Tailwind layout: `max-w-5xl mx-auto p-4 sm:p-6 space-y-6`, card sections with `rounded-lg border p-4`. Phone layout per the spec: tiles `grid grid-cols-1 sm:grid-cols-3 gap-4`, each table wrapped in `overflow-x-auto`, Link button `w-full sm:w-auto`.
 
 - [ ] **Step 4: Lint and build**
 
@@ -329,14 +329,18 @@ With both servers running and a fresh `dev.db` (`cd backend && rm -f dev.db && .
 3. The page fills in with the "Account linked." notice.
 4. Refresh. The tiles, chart, accounts table, and a credit card row in Debts with its APR are all present.
 
-- [ ] **Step 6: Review Focus manual checks**
+- [ ] **Step 6: Phone demo**
+
+`npm run build && npm run start:lan`, get the IP with `ipconfig getifaddr en0`, and open `http://<ip>:3000` on the phone (same Wi-Fi; hotspot or `ngrok http 3000` if the network isolates clients). Expected: no horizontal page scroll at phone width, tiles stacked, tables scroll inside their cards, Link opens and completes with First Platypus Bank / `user_good`, and the debts table shows the credit card APR. Also check at 375px in DevTools device mode.
+
+- [ ] **Step 7: Review Focus manual checks**
 
 1. Stop the backend and reload. The error banner shows a status (no crash in the console). Restart the backend and click Retry, and the data loads.
 2. Remove `PLAID_SECRET` from `.env` and restart the backend. The button area shows "Couldn't start Link: …". Then restore the secret.
 3. In DevTools Network, link once more. Exactly one `/api/plaid/exchange` request is sent.
 4. To simulate a failed sync, temporarily make `_sync_after_link` return `False`. The "Linked, but loading its data failed" notice appears. Double-clicking Retry sync sends one request at a time, and the notice clears after the sync. Then revert the temporary change.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add frontend
@@ -352,7 +356,7 @@ git commit -m "feat(TPC-11): dashboard page with Plaid Link, net worth, chart an
 
 - [ ] **Step 1: README**
 
-Replace the current two-line content with a "Run locally" section. Use the spec's two-terminal block, plus a note to copy `.env.example` to `.env` and run `../venv/bin/alembic upgrade head` from `backend/` first.
+Replace the current two-line content with a "Run locally" section. Use the spec's two-terminal block, plus a note to copy `.env.example` to `.env` and run `../venv/bin/alembic upgrade head` from `backend/` first. Add a "Demo on a phone" subsection with the spec's "Phone demo" steps (`start:lan`, `ipconfig getifaddr en0`, hotspot/ngrok fallback, non-OAuth bank).
 
 - [ ] **Step 2: Architecture doc**
 

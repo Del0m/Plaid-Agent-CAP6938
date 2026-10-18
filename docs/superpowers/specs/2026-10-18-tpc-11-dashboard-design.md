@@ -146,6 +146,10 @@ async rewrites() {
 - **After a link:** dashboard re-fetches; a dismissible notice says "Account linked." If `synced` is false the notice says "Linked, but loading its data failed" with a Retry sync button: it calls `syncItem(item_id)`, then re-fetches the dashboard; a second failure shows the error and keeps the button.
 - **Link exit with error:** inline message near the button.
 
+### Phone layout
+
+The demo runs on a phone browser, so the page must work at 375px wide with no horizontal page scroll: stat tiles stack (`grid-cols-1 sm:grid-cols-3`), each table sits in an `overflow-x-auto` wrapper inside its card, the chart fills the card width, and the Link button is full width on small screens.
+
 ### Running locally
 
 README gains a "Run locally" section:
@@ -157,6 +161,12 @@ cd backend && ../venv/bin/uvicorn app.main:app --reload --port 8000
 cd frontend && npm install && npm run dev   # http://localhost:3000
 ```
 
+### Phone demo
+
+`frontend/package.json` gets `"start:lan": "next start -H 0.0.0.0"`. Demo flow: `npm run build && npm run start:lan`, then open `http://<mac-lan-ip>:3000` on a phone on the same network (`ipconfig getifaddr en0` prints the IP; allow incoming connections for node if macOS asks). The production server is used because `next dev` blocks dev resources requested through a LAN IP unless they are in `allowedDevOrigins`. The backend stays on `localhost:8000`: the Next server proxies to it from the Mac, so the phone never talks to FastAPI directly.
+
+If the network isolates clients (common on campus Wi-Fi), use the phone's hotspot or `ngrok http 3000` and open the HTTPS URL. Pick a non-OAuth Sandbox bank (First Platypus Bank); OAuth banks need a registered `redirect_uri`, which is out of scope.
+
 ## Docs
 
 - `docs/architecture.md` decision log: add rows for inline sync on exchange (and `synced: false` on failure), the net worth / debt definitions, and the Next.js `/api` proxy instead of CORS.
@@ -167,6 +177,7 @@ cd frontend && npm install && npm run dev   # http://localhost:3000
 1. `cd backend && ../venv/bin/python -m pytest` passes, including the new tests.
 2. `cd frontend && npm run lint && npm run build` pass.
 3. Manual demo: start both servers, open `http://localhost:3000`, click Connect, pick a Sandbox bank, log in as `user_good` / `pass_good`, refresh, and see account balances, net worth, the chart, and a credit card in the debts table with its APR.
+4. Phone demo: repeat step 3 from a phone browser via `start:lan` (see "Phone demo"); the page has no horizontal scroll and Link opens and completes on the phone.
 
 ## Follow-ups (not this ticket)
 
