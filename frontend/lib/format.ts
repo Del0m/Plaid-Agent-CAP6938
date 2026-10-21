@@ -1,0 +1,23 @@
+// display helpers; money arrives from the backend as integer cents
+
+const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+
+export function formatCents(cents: number | null): string {
+  return cents === null ? "—" : usd.format(cents / 100);
+}
+
+export function formatApr(apr: number | null): string {
+  return apr === null ? "—" : `${apr.toFixed(2)}%`;
+}
+
+// "2026-11-15" -> "Nov 15, 2026"; formatted in UTC so the day doesn't shift by timezone
+const day = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
+
+export function formatDate(iso: string | null): string {
+  return iso === null ? "—" : day.format(new Date(iso));
+}
+
+// "Plaid Checking ••0000"
+export function accountLabel(name: string, mask: string | null): string {
+  return mask ? `${name} ••${mask}` : name;
+}

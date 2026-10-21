@@ -1,9 +1,12 @@
+import httpx
 import pytest
 from sqlalchemy import select
 
 from app import config
+from app.api import plaid as plaid_api
 from app.db.models import PlaidItem, User
 from app.plaid_service import client as plaid
+from app.plaid_service.client import PlaidError
 from app.security import decrypt
 
 
@@ -11,6 +14,14 @@ from app.security import decrypt
 def fake_exchange(monkeypatch, item_id, *tokens):
     it = iter(tokens)
     monkeypatch.setattr(plaid, "exchange_public_token", lambda _public_token: (next(it), item_id))
+
+
+# stand-in for sync_item so exchange tests stay offline; returns the items it was called with
+@pytest.fixture
+def synced(monkeypatch):
+    calls = []
+    monkeypatch.setattr(plaid_api, "sync_item", lambda session, item: calls.append(item.plaid_item_id))
+    return calls
 
 
 # every plaid_items row in the test db
@@ -57,14 +68,14 @@ def test_link_token_sets_webhook_only_when_configured(client, monkeypatch, url):
 
 
 # linking a new bank creates one active row with the access_token encrypted
-def test_first_link_stores_item(client, db, monkeypatch):
+def test_first_link_stores_item(client, db, monkeypatch, synced):
     fake_exchange(monkeypatch, "item-1", "access-1")
 
     resp = client.post("/plaid/exchange", json={"public_token": "public-1"})
 
     assert resp.status_code == 200
     [item] = items(db)
-    assert resp.json() == {"item_id": item.id}
+    assert resp.json() == {"item_id": item.id, "synced": True}
     assert item.plaid_item_id == "item-1"
     assert item.status == "active"
     # stored encrypted, never as the plaintext token
@@ -74,7 +85,7 @@ def test_first_link_stores_item(client, db, monkeypatch):
 
 # running Link again for an already-stored item returns the same row (no 500),
 # swaps in the new token and reactivates it
-def test_relinking_same_item_updates_existing_row(client, db, monkeypatch):
+def test_relinking_same_item_updates_existing_row(client, db, monkeypatch, synced):
     fake_exchange(monkeypatch, "item-1", "access-1", "access-2")
     first = client.post("/plaid/exchange", json={"public_token": "public-1"})
     with db() as s:
@@ -91,7 +102,7 @@ def test_relinking_same_item_updates_existing_row(client, db, monkeypatch):
 
 
 # an item that belongs to a different user gets 409 and their row is left untouched
-def test_item_owned_by_another_user_is_409(client, db, monkeypatch):
+def test_item_owned_by_another_user_is_409(client, db, monkeypatch, synced):
     fake_exchange(monkeypatch, "item-1", "access-1", "access-2")
     client.post("/plaid/exchange", json={"public_token": "public-1"})
     with db() as s:
@@ -108,6 +119,74 @@ def test_item_owned_by_another_user_is_409(client, db, monkeypatch):
     assert decrypt(item.access_token_enc) == "access-1"
 
 
+# linking runs a full sync right away so the dashboard has data on first load
+def test_exchange_syncs_new_item(client, db, monkeypatch, synced):
+    fake_exchange(monkeypatch, "item-1", "access-1")
+
+    resp = client.post("/plaid/exchange", json={"public_token": "public-1"})
+
+    assert resp.status_code == 200
+    assert resp.json()["synced"] is True
+    assert synced == ["item-1"]
+
+
+# re-linking also re-syncs (the new token may reach data the old one couldn't)
+def test_exchange_syncs_on_relink(client, db, monkeypatch, synced):
+    fake_exchange(monkeypatch, "item-1", "access-1", "access-2")
+    client.post("/plaid/exchange", json={"public_token": "public-1"})
+
+    client.post("/plaid/exchange", json={"public_token": "public-2"})
+
+    assert synced == ["item-1", "item-1"]
+
+
+# a sync failure after a good exchange keeps the item and reports synced: false
+@pytest.mark.parametrize("err", [
+    PlaidError(500, "INTERNAL_SERVER_ERROR", "boom"),
+    httpx.ConnectError("down"),
+    RuntimeError("kept changing"),
+    KeyError("account_id"),
+])
+def test_sync_failure_keeps_item_and_reports_unsynced(client, db, monkeypatch, err):
+    fake_exchange(monkeypatch, "item-1", "access-1")
+
+    def failing(session, item):
+        raise err
+
+    monkeypatch.setattr(plaid_api, "sync_item", failing)
+
+    resp = client.post("/plaid/exchange", json={"public_token": "public-1"})
+
+    assert resp.status_code == 200
+    [item] = items(db)
+    assert resp.json() == {"item_id": item.id, "synced": False}
+
+
+# institution name from Link metadata is stored; a re-link without it keeps the old value
+def test_institution_name_stored_and_kept(client, db, monkeypatch, synced):
+    fake_exchange(monkeypatch, "item-1", "access-1", "access-2")
+
+    client.post("/plaid/exchange", json={"public_token": "public-1", "institution_name": "First Platypus Bank"})
+    assert items(db)[0].institution_name == "First Platypus Bank"
+
+    client.post("/plaid/exchange", json={"public_token": "public-2"})
+    assert items(db)[0].institution_name == "First Platypus Bank"
+
+
+# a rejected public_token never gets as far as syncing
+def test_failed_exchange_does_not_sync(client, db, monkeypatch, synced):
+    def bad(_public_token):
+        raise PlaidError(400, "INVALID_PUBLIC_TOKEN", "bad token")
+
+    monkeypatch.setattr(plaid, "exchange_public_token", bad)
+
+    resp = client.post("/plaid/exchange", json={"public_token": "nope"})
+
+    assert resp.status_code == 400
+    assert synced == []
+    assert items(db) == []
+
+
 # real round trip against plaid sandbox: link token, sandbox public_token, exchange,
 # then check the stored item; skipped when .env has no plaid credentials
 @pytest.mark.skipif(
@@ -120,6 +199,7 @@ def test_sandbox_link_end_to_end(client, db):
     resp = client.post("/plaid/exchange", json={"public_token": plaid.sandbox_public_token()})
 
     assert resp.status_code == 200
+    assert resp.json()["synced"] is True
     [item] = items(db)
     assert item.plaid_item_id
     assert decrypt(item.access_token_enc).startswith("access-sandbox-")

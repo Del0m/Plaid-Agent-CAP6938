@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -24,9 +25,11 @@ class LinkTokenResponse(BaseModel):
 
 class ExchangeRequest(BaseModel):
     public_token: str
+    institution_name: Optional[str] = None      # from Link's onSuccess metadata, display only
 
 class ExchangeResponse(BaseModel):
     item_id: int
+    synced: bool                                # false = linked, but the first sync failed
 
 
 # turn plaid/network failures into an HTTP error without leaking secrets or tokens
@@ -38,6 +41,20 @@ def _plaid_failure(err: Exception) -> HTTPException:
         return HTTPException(code, detail={"plaid_error_code": err.error_code})
     logger.warning("plaid unreachable: %s", type(err).__name__)
     return HTTPException(status.HTTP_502_BAD_GATEWAY, detail="plaid unreachable")
+
+
+# first sync right after linking so the dashboard has data; a failure keeps the item
+# (its token is still good) and the caller can retry with /plaid/items/{id}/sync.
+# catches everything: the item is already stored, so a 500 here would read as "link failed"
+def _sync_after_link(session: Session, item: PlaidItem) -> bool:
+    try:
+        sync_item(session, item)
+        return True
+    except Exception as err:
+        logger.warning("sync after link failed for item %s: %s",
+                       item.id, getattr(err, "error_code", type(err).__name__))
+        session.rollback()
+        return False
 
 
 @router.post("/link-token", response_model=LinkTokenResponse)
@@ -69,13 +86,18 @@ def exchange_public_token(
             raise HTTPException(status.HTTP_409_CONFLICT, detail="item already linked")
         existing.access_token_enc = encrypt(access_token)
         existing.status = "active"
+        if body.institution_name:
+            existing.institution_name = body.institution_name
         session.commit()
-        return ExchangeResponse(item_id=existing.id)
+        # read the id first: a failed sync rolls back, which expires the row
+        item_id = existing.id
+        return ExchangeResponse(item_id=item_id, synced=_sync_after_link(session, existing))
 
     item = PlaidItem(
         user_id=user.id,
         plaid_item_id=plaid_item_id,
         access_token_enc=encrypt(access_token),
+        institution_name=body.institution_name,
     )
     session.add(item)
     try:
@@ -84,7 +106,8 @@ def exchange_public_token(
         # a concurrent exchange inserted the same item between our check and commit
         session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="item already linked")
-    return ExchangeResponse(item_id=item.id)
+    item_id = item.id
+    return ExchangeResponse(item_id=item_id, synced=_sync_after_link(session, item))
 
 
 # pull everything for one of the current user's items; safe to call repeatedly
