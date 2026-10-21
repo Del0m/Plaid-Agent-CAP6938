@@ -15,7 +15,7 @@ Finish Milestone 1: a user links a Plaid Sandbox bank from a Next.js page and se
 | Question | Decision |
 |---|---|
 | How does data arrive after linking? | `POST /plaid/exchange` runs `sync_item` inline before returning |
-| Inline sync fails | Keep the item, return 200 with `synced: false`; the page offers a Retry sync button that calls the existing `POST /plaid/items/{id}/sync` |
+| Inline sync fails | Keep the item, return 200 with `synced: false`; `/dashboard` lists never-synced items as `unsynced_items` and the page offers Retry sync for each (calls the existing `POST /plaid/items/{id}/sync`), so the retry survives a refresh |
 | What is a debt? | An account with a `liabilities` row (credit, student, mortgage) |
 | Net worth | `depository` + `investment` current balances minus `credit` + `loan` current balances; accounts with a null balance are skipped and counted |
 | Does `/dashboard` call Plaid? | No. It reads the DB only |
@@ -38,7 +38,7 @@ Request:
 
 `institution_name` is optional. When present it is written to `PlaidItem.institution_name` on both the new-item and re-link paths; when absent an existing value is left alone.
 
-After the item is committed (new item or re-link), call `sync_item(session, item)`. Catch `PlaidError`, `httpx.HTTPError`, and the `RuntimeError` that `_fetch_sync_pages` raises when pagination keeps restarting; log the failure (error code or exception type only, never the token) and continue.
+After the item is committed (new item or re-link), call `sync_item(session, item)`. Catch any exception (expected ones are `PlaidError`, `httpx.HTTPError`, and the `RuntimeError` that `_fetch_sync_pages` raises when pagination keeps restarting; anything else would otherwise turn into a 500 for a stored item); log the failure (error code or exception type only, never the token), roll back, and continue.
 
 Response, always 200 once the exchange itself succeeded:
 
@@ -72,7 +72,8 @@ Scoped to `get_current_user`. Reads `Account`, `Liability`, and `PlaidItem` (for
       "kind": "credit", "apr": 15.24, "balance_cents": 41000,
       "min_payment_cents": 2000, "next_due_date": "2026-11-15"
     }
-  ]
+  ],
+  "unsynced_items": [{ "id": 2, "institution_name": "Tartan Bank" }]
 }
 ```
 
@@ -85,6 +86,7 @@ Rules:
 - `accounts` is ordered by type (assets first, then debts, then other), then name.
 - `debts` comes from `Liability` joined to `Account`, sorted by `apr` descending with null APRs last, ties broken by `balance_cents` descending.
 - `balance_cents` in `debts` is the liability's stored `balance_cents` (set from the account's current balance at liability refresh).
+- `unsynced_items` lists the user's items with `txn_cursor IS NULL` (only a finished transactions sync writes the cursor), ordered by id.
 - A user with no accounts gets zeros and empty lists, not a 404. The frontend uses empty `accounts` to show its empty state.
 
 Response models are Pydantic classes in `dashboard.py`, matching the style of `LinkTokenResponse` and friends.
@@ -100,12 +102,13 @@ Response models are Pydantic classes in `dashboard.py`, matching the style of `L
 - debts sort by APR descending, null APR last, ties by balance
 - another user's accounts and liabilities never appear
 - `institution_name` comes from the account's item
+- never-synced items (and only the user's own) appear in `unsynced_items`
 
 `backend/tests/test_plaid.py` additions, with `docs/tests/test_plaid.md` updated in the same change:
 
 - exchange calls `sync_item` for a new item and returns `synced: true`
 - exchange calls `sync_item` on re-link too
-- `sync_item` raising `PlaidError` / `httpx.HTTPError` / `RuntimeError` still returns 200, `synced: false`, item saved
+- `sync_item` raising `PlaidError` / `httpx.HTTPError` / `RuntimeError` / any other exception still returns 200, `synced: false`, item saved
 - `institution_name` is stored when sent and preserved when omitted on re-link
 - a failed exchange does not attempt a sync
 
@@ -143,7 +146,8 @@ async rewrites() {
 - **Error:** banner with the error and a Retry button that re-runs the fetch.
 - **Empty** (`accounts` is empty): centered "Connect a bank" card containing `PlaidLinkButton`.
 - **Populated:** header with a "Link another account" `PlaidLinkButton`, then `NetWorthSummary`, `BalanceChart`, `DebtsTable`, `AccountsTable`.
-- **After a link:** dashboard re-fetches; a dismissible notice says "Account linked." If `synced` is false the notice says "Linked, but loading its data failed" with a Retry sync button: it calls `syncItem(item_id)`, then re-fetches the dashboard; a second failure shows the error and keeps the button.
+- **After a link:** dashboard re-fetches; if `synced` is true a dismissible notice says "Account linked."
+- **Unsynced items** (any state with data): one banner per `unsynced_items` entry, "<institution> is linked, but loading its data failed.", with a Retry sync button that calls `syncItem(id)` and then re-fetches; a failure shows the error under that banner. Retry buttons are disabled while any retry is in flight.
 - **Link exit with error:** inline message near the button.
 
 ### Phone layout
