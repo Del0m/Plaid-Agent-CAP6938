@@ -1,0 +1,118 @@
+# Tests: `backend/tests/test_gateway.py`
+
+These tests cover `app/privacy/gateway.py`, the only code path that turns user data into LLM prompt text (architecture section 7). They check the per-purpose field allowlists, the per-session pseudonym, scrubbing of free-text fields, spending minimization, and the JSONL audit log. Run them from `backend/`:
+
+```bash
+../venv/bin/python -m pytest tests/test_gateway.py -v
+```
+
+## Shared setup
+
+The `db` fixture from `conftest.py` provides a fresh in-memory database (see [`test_plaid.md`](test_plaid.md#shared-setup-backendtestsconftestpy)). Every test passes its own `audit_path` under pytest's `tmp_path`, so nothing is written to `backend/logs/`.
+
+- `fixed_today` (autouse) pins `gateway._today()` to 2026-10-21, so the default 30-day spending window is the same on every run.
+- `add_user`, `add_account` and `add_txn` write rows straight to the database. `add_account` can attach a liability.
+- `seed_pii_user(db)` creates the spec's "Jane Doe" with PII in every place it could leak from:
+  - email `jane.doe@example.com`;
+  - item id `item-secret-1`;
+  - an account named "Jane Doe's Checking ••4321" with mask `4321` and Plaid id `acc-secret-1`;
+  - a credit card with a 22% APR;
+  - transactions "Zelle to Jane Doe" (TRANSFER_OUT) and "Starbucks" (FOOD_AND_DRINK).
+- `PII` is the list of strings that must never appear in a prompt. It includes the user id `u-jane`.
+- `data(prompt)` parses a prompt and returns its `data`. `audit_lines(path)` parses the JSONL log.
+
+---
+
+## `test_no_pii_in_any_prompt`
+
+**What it does:** Builds every kind of context for Jane: accounts, debts, spending totals, and spending for TRANSFER_OUT. It asserts that none of the `PII` strings appear in any of them.
+
+**Why it's there:** This is the ticket's done-when: "a unit test shows no name/email/account number in a gateway-built prompt." It covers the two ways PII leaks:
+- an allowlist mistake would leak the email, mask, ids or user id;
+- a scrub gap would leak the name in the account label or the Zelle merchant.
+
+## `test_rows_have_only_allowlisted_keys`
+
+**What it does:** Checks that every account, debt and transaction row has exactly the keys in `ACCOUNT_FIELDS`, `DEBT_FIELDS` and `TXN_FIELDS`.
+
+**Why it's there:** It enforces "allowlist, not blocklist" (section 7, step 1). If someone builds a row from a whole model object, or adds a field without updating the allowlist, this test fails before the field reaches a prompt.
+
+## `test_money_in_dollars`
+
+**What it does:** Checks that a balance of 12345 cents shows up as `123.45`.
+
+**Why it's there:** The database stores integer cents, but a model reading `41000` would say forty-one thousand dollars. The conversion happens in one place (`_dollars`) and this test pins it.
+
+## `test_pseudonym_format_and_lifetime`
+
+**What it does:** Replaces `secrets.token_hex` so two gateways get `7f3a` and `b2c1`. It checks that the first gateway uses `user_7f3a` in every prompt it builds and the second uses `user_b2c1`.
+
+**Why it's there:** The model sees a pseudonym, never the internal user id (section 7, step 4). The pseudonym must stay the same within one chat session so the model sees one consistent user, and change between sessions so it can't link sessions together.
+
+## `test_other_users_data_hidden`
+
+**What it does:** Adds a second user with a card named "Theirs" and checks that it doesn't appear in Jane's accounts or debts.
+
+**Why it's there:** Every query needs a `user_id` filter. A missing filter here would send another person's finances to the model, which is worse than a leak to the screen, because it also ends up in the audit log.
+
+## `test_debts_sorted_like_dashboard`
+
+**What it does:** Adds cards with APRs of 15, 24.99 and unknown, and expects the order 24.99, 15, unknown.
+
+**Why it's there:** The M2 done-when question is "which debt first?". If the model sees debts in the same avalanche order as the dashboard, the answer and the page agree, and a small model doesn't have to sort the list itself.
+
+## `test_spending_totals_positive_only_in_range`
+
+**What it does:**
+- Adds a purchase of +650 and a refund of -200 in FOOD_AND_DRINK, a +100 purchase before the start date, and a removed +999.
+- Expects `{"FOOD_AND_DRINK": 6.5}`.
+
+**Why it's there:** It checks three rules at once:
+- spending means money out, so positive amounts only, per the sign convention in section 5;
+- removed (soft-deleted) transactions don't count;
+- the date range is respected.
+
+Getting any of them wrong would give the model a wrong total to reason about.
+
+## `test_spending_category_lists_capped_newest_first`
+
+**What it does:** Adds 60 FOOD_AND_DRINK transactions and one TRANSFER_OUT, then asks for FOOD_AND_DRINK. It expects 50 rows, the first dated today, and no TRANSFER_OUT anywhere.
+
+**Why it's there:** This is "minimize per purpose" (section 7, step 2): a question about dining gets dining rows only. The cap keeps the prompt small, which matters for an 8B model's accuracy and speed.
+
+## `test_spending_defaults_to_last_30_days`
+
+**What it does:** With today pinned to 2026-10-21, a transaction on 2026-09-21 is included and one on 2026-09-20 is not.
+
+**Why it's there:** The tools in TPC-13 will often ask for spending without dates. This test pins the default window and its edge.
+
+## `test_empty_user_builds_empty_context`
+
+**What it does:** For a user with no rows, accounts and debts return `[]`, spending returns `{}`, and there are still three audit lines.
+
+**Why it's there:** A new user will chat before linking a bank. The gateway should return empty context rather than crash, and every call should still be logged.
+
+## `test_audit_line_per_call`
+
+**What it does:** Builds two prompts and checks that the log has two lines. Each line's `prompt` matches the returned string exactly, the pseudonym matches, the purposes and params are right, and the user id appears nowhere in the file.
+
+**Why it's there:** The audit log is the record of what left the system (section 7, step 6), and it's evidence for the report. It has to hold the exact text that was sent and must not become a PII leak itself.
+
+## `test_audit_creates_missing_directory`
+
+**What it does:** Points the audit log at a directory that doesn't exist yet and checks that the file is created.
+
+**Why it's there:** `backend/logs/` is git-ignored, so it won't exist on a fresh clone. The first prompt shouldn't fail because of that.
+
+## `test_unknown_purpose_raises`
+
+**What it does:** Asks for purpose `"transactions"` and expects a `ValueError`.
+
+**Why it's there:** Each purpose has its own reviewed allowlist. A typo or a new purpose must fail loudly instead of falling through to some default that sends more than intended.
+
+---
+
+## Not covered
+
+- **PII the scrub doesn't recognize** in an account or merchant name, such as "Mom" or "Jane Doe Photography". See `test_scrub.md`. The allowlist limits this to those two fields.
+- **Concurrent writes to the audit log.** Appends happen one call at a time. Chat sessions running in parallel (TPC-15) could interleave writes; JSONL lines this short are effectively atomic on macOS, but nothing tests that.
