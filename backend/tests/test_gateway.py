@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.db.models import Account, Liability, PlaidItem, Transaction, User
+from tests.factories import add_account, add_txn, add_user
 from app.privacy import gateway as gw
 from app.privacy.gateway import ACCOUNT_FIELDS, DEBT_FIELDS, TXN_FIELDS, PrivacyGateway
 
@@ -15,31 +15,6 @@ PII = ["Jane", "Doe", "jane.doe@example.com", "4321", "acc-secret-1", "item-secr
 @pytest.fixture(autouse=True)
 def fixed_today(monkeypatch):
     monkeypatch.setattr(gw, "_today", lambda: TODAY)
-
-
-def add_user(s, user_id, email):
-    s.add(User(id=user_id, email=email, password_hash="!"))
-    item = PlaidItem(user_id=user_id, plaid_item_id=f"item-{user_id}", access_token_enc="x")
-    s.add(item)
-    s.flush()
-    return item
-
-
-def add_account(s, item, name, type_="depository", balance=10000, mask=None, plaid_id=None, liability=None):
-    acct = Account(user_id=item.user_id, item_id=item.id, plaid_account_id=plaid_id or f"acc-{item.id}-{name}",
-                   name=name, mask=mask, type=type_, current_balance_cents=balance)
-    s.add(acct)
-    s.flush()
-    if liability:
-        s.add(Liability(user_id=item.user_id, account_id=acct.id, balance_cents=balance, **liability))
-    return acct
-
-
-def add_txn(s, acct, amount, category, merchant="Shop", day=date(2026, 10, 10), removed=False):
-    s.add(Transaction(user_id=acct.user_id, account_id=acct.id, plaid_txn_id=f"t-{acct.id}-{s.info.setdefault('n', 0)}",
-                      date=day, amount_cents=amount, merchant_name=merchant, pf_category_primary=category,
-                      removed=removed))
-    s.info["n"] += 1
 
 
 # the spec's Jane Doe: PII in the email, the account name, the mask, plaid ids and a Zelle merchant
