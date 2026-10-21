@@ -49,6 +49,12 @@ The `db` fixture from `conftest.py` provides a fresh in-memory database (see [`t
 
 **Why it's there:** The model sees a pseudonym, never the internal user id (section 7, step 4). The pseudonym must stay the same within one chat session so the model sees one consistent user, and change between sessions so it can't link sessions together.
 
+## `test_pseudonym_can_be_reused`
+
+**What it does:** Builds a gateway with `pseudonym="user_abcd"` and checks that the gateway and its prompt both use it.
+
+**Why it's there:** A chat session spans many HTTP requests, and each request gets its own database session and so its own gateway. Without a way to pass the pseudonym back in, the model would see a new user on every turn. The final review found this gap before TPC-15 built on the constructor.
+
 ## `test_other_users_data_hidden`
 
 **What it does:** Adds a second user with a card named "Theirs" and checks that it doesn't appear in Jane's accounts or debts.
@@ -79,6 +85,12 @@ Getting any of them wrong would give the model a wrong total to reason about.
 **What it does:** Adds 60 FOOD_AND_DRINK transactions and one TRANSFER_OUT, then asks for FOOD_AND_DRINK. It expects 50 rows, the first dated today, and no TRANSFER_OUT anywhere.
 
 **Why it's there:** This is "minimize per purpose" (section 7, step 2): a question about dining gets dining rows only. The cap keeps the prompt small, which matters for an 8B model's accuracy and speed.
+
+## `test_spending_category_case_insensitive_and_zero`
+
+**What it does:** With one FOOD_AND_DRINK purchase, asking for `food_and_drink` returns FOOD_AND_DRINK with its $6.50 total, and asking for TRAVEL returns `{"category": "TRAVEL", "total": 0.0, "transactions": []}`.
+
+**Why it's there:** Plaid categories are upper-case enums, but models often send them in lowercase. Before this fix, both a lowercase name and a category with no spending returned `{}`, which the model can't tell apart from "no data". It would then tell the user they spent nothing on dining. Now the category is normalized and zero is stated explicitly.
 
 ## `test_spending_defaults_to_last_30_days`
 

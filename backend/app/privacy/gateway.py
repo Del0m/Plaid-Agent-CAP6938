@@ -33,11 +33,14 @@ def _dollars(cents: Optional[int]) -> Optional[float]:
 
 class PrivacyGateway:
     # one instance per chat session: the pseudonym lives (and dies) with it
-    def __init__(self, session: Session, user_id: str, audit_path: Optional[Path] = None):
+    # a chat session spans many requests, each with its own db session, so the caller passes
+    # the session's pseudonym back in to keep it stable; omitted = start a new one
+    def __init__(self, session: Session, user_id: str, audit_path: Optional[Path] = None,
+                 pseudonym: Optional[str] = None):
         self._session = session
         self._user_id = user_id
         self._audit_path = audit_path or config.PROMPT_AUDIT_PATH
-        self.pseudonym = "user_" + secrets.token_hex(2)
+        self.pseudonym = pseudonym or "user_" + secrets.token_hex(2)
 
     def build_context(self, purpose: Purpose, *, start: Optional[date] = None,
                       end: Optional[date] = None, category: Optional[str] = None) -> str:
@@ -99,12 +102,12 @@ class PrivacyGateway:
 
         if category is None:
             return {k: _dollars(v) for k, v in sorted(totals.items(), key=lambda kv: -kv[1])}
-        if category not in totals:
-            return {}
+        # plaid categories are upper-case enums; models often send them lower-case
+        category = category.upper()
         rows = [t for t in txns if (t.pf_category_primary or "UNCATEGORIZED") == category][:TXN_LIMIT]
         return {
             "category": category,
-            "total": _dollars(totals[category]),
+            "total": _dollars(totals.get(category, 0)),   # an explicit $0, not "no data"
             "transactions": [{"date": t.date, "amount": _dollars(t.amount_cents),
                               "merchant": scrub_merchant(t.merchant_name)} for t in rows],
         }

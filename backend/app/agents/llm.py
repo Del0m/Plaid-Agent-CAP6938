@@ -1,9 +1,13 @@
+import logging
 from typing import Optional
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, ToolException
 from langchain_ollama import ChatOllama
+from pydantic import ValidationError
 from .. import config
+
+logger = logging.getLogger(__name__)
 
 # the only place the app creates an LLM client (architecture section 3), so swapping
 # llama3.1 for mistral or a hosted model in benchmarks is a change to this file only
@@ -42,12 +46,18 @@ def call_with_tools(
     raise RuntimeError(f"tool loop did not finish in {max_steps} steps")
 
 
-# errors go back to the model as text so it can recover; small models do invent tool names
+# errors go back to the model as text so it can recover; small models do invent tool names.
+# only messages meant for the model are forwarded: any other exception text can carry user
+# data (sqlalchemy prints bound parameters) and this path bypasses the privacy gateway
 def _run_tool(by_name: dict, tc: dict) -> str:
-    t = by_name.get(tc["name"])
+    name = tc["name"]
+    t = by_name.get(name)
     if t is None:
-        return f"error: unknown tool {tc['name']}"
+        return f"error: unknown tool {name}"
     try:
         return str(t.invoke(tc["args"]))
-    except Exception as exc:
+    except (ToolException, ValidationError) as exc:
         return f"error: {exc}"
+    except Exception as exc:
+        logger.warning("tool %s failed", name, exc_info=True)   # full detail stays in local logs
+        return f"error: {name} failed ({type(exc).__name__})"

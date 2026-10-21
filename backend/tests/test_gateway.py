@@ -115,6 +115,18 @@ def test_pseudonym_format_and_lifetime(db, tmp_path, monkeypatch):
     assert second.pseudonym == "user_b2c1"
 
 
+# a chat session spans many requests (each with its own db session); passing the pseudonym
+# back in keeps the model seeing one consistent user
+def test_pseudonym_can_be_reused(db, tmp_path):
+    uid = seed_pii_user(db)
+    with db() as s:
+        g = PrivacyGateway(s, uid, audit_path=tmp_path / "a.jsonl", pseudonym="user_abcd")
+        prompt = g.build_context("accounts")
+
+    assert g.pseudonym == "user_abcd"
+    assert json.loads(prompt)["user"] == "user_abcd"
+
+
 def test_other_users_data_hidden(db, tmp_path):
     uid = seed_pii_user(db)
     with db() as s:
@@ -169,6 +181,20 @@ def test_spending_category_lists_capped_newest_first(db, tmp_path):
     assert len(out["transactions"]) == 50
     assert out["transactions"][0]["date"] == TODAY.isoformat()
     assert "TRANSFER_OUT" not in json.dumps(out)
+
+
+# models lowercase enum values; and "no rows in that category" must read as $0, not as nothing
+def test_spending_category_case_insensitive_and_zero(db, tmp_path):
+    with db() as s:
+        acct = add_account(s, add_user(s, "u-1", "a@example.com"), "Checking")
+        add_txn(s, acct, 650, "FOOD_AND_DRINK")
+        s.commit()
+        g = PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl")
+        dining = data(g.build_context("spending", category="food_and_drink"))
+        travel = data(g.build_context("spending", category="TRAVEL"))
+
+    assert (dining["category"], dining["total"]) == ("FOOD_AND_DRINK", 6.5)
+    assert travel == {"category": "TRAVEL", "total": 0.0, "transactions": []}
 
 
 def test_spending_defaults_to_last_30_days(db, tmp_path):

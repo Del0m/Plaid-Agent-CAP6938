@@ -9,10 +9,12 @@ EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 PHONE = re.compile(r"(?:\+1[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}")
 # 4+ digits: card and account numbers, masks, reference ids. "Route 66" and "7-Eleven" survive
 DIGITS = re.compile(r"\d{4,}")
-# "Zelle to Jane Doe" -> "Zelle to [person]": the word(s) after a p2p service are a person
-P2P = re.compile(r"\b(zelle|venmo|cash app|paypal)(\s+(?:to|from)\s+)\S+(?:\s+\S+)?", re.IGNORECASE)
-# "Jane Doe's Checking": in the user's own account labels a possessive is a person, not a brand
-POSSESSIVE = re.compile(r"\b[A-Z][a-z]+(?: [A-Z][a-z]+)?(?=['’]s\b)")
+# "Zelle payment to Jane Doe" -> "Zelle payment to [person]": after a p2p service's to/from,
+# everything up to the next scrubbed token is the counterparty
+P2P = re.compile(r"\b(zelle|venmo|cash app|apple cash|paypal)\b(.*?\b(?:to|from)\s+)[^\[]*[^\[\s]", re.IGNORECASE)
+# "Jane Doe's Checking", "JANE & BOB'S JOINT", "José's": in the user's own account labels a
+# possessive is a person, so every word (any case, any script) before the 's goes
+POSSESSIVE = re.compile(r"(?:[^\W\d_]+(?:\s*&\s*|\s+))*[^\W\d_]+(?=['’][sS]\b)")
 
 
 def scrub_text(s: Optional[str]) -> Optional[str]:

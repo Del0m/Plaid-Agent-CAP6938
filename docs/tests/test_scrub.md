@@ -30,15 +30,15 @@ These are pure functions, so there are no fixtures or helpers.
 
 ## `test_p2p_counterparties`
 
-**What it does:** Parametrized over Zelle, Venmo, PayPal and Cash App (in capitals). The word or two after "to" or "from" becomes `[person]`, so "PayPal to Jane Doe Smith" keeps only "Smith".
+**What it does:** Parametrized over Zelle, Venmo, PayPal, Cash App (in capitals) and Apple Cash. Everything after "to" or "from" becomes `[person]`, stopping at an already-scrubbed token. So "Zelle payment to Jane Doe" becomes "Zelle payment to [person]", "PayPal to Jane Doe Smith" becomes "PayPal to [person]", and "Zelle to Jane Doe 12345678" becomes "Zelle to [person] [number]".
 
-**Why it's there:** A person-to-person transfer's merchant string is a person's name. Section 7 calls out "Zelle to FIRSTNAME" by name. The pattern takes at most two words so it can't swallow the rest of a long string. The PayPal case documents that limit, and a three-word name leaks its last word.
+**Why it's there:** A person-to-person transfer's merchant string is a person's name. Section 7 calls out "Zelle to FIRSTNAME" by name. The first version took exactly two words after "to"; the final review showed that leaked three-word names ("Smith") and missed "Zelle payment to …" entirely. A counterparty string rarely holds anything but the name, so the scrub takes all of it.
 
 ## `test_account_possessive`
 
-**What it does:** Checks that `scrub_account_name` turns "Jane's Checking" into "[person]'s Checking".
+**What it does:** Parametrized over "Jane's Checking", "JANE DOE'S CHECKING", "José's Checking", "jane's checking", "Jane & Bob's Joint", "Mary Jane Watson's Savings" and a curly apostrophe. In each one, every word before the `'s` becomes `[person]`.
 
-**Why it's there:** Users label accounts with their own or a family member's name. Those labels are their own, so a capitalized possessive there is a person.
+**Why it's there:** Users label accounts with their own or a family member's name, so a possessive in their own labels is a person. The first version only matched one or two title-case ASCII words. The final review showed that all-caps labels (common in bank data), accented names and lowercase names passed through unchanged, and that joint and three-word names leaked their first word. Removing a little too much from an account label costs little; leaking a name is what this module exists to stop.
 
 ## `test_merchant_keeps_brand_possessive`
 
@@ -67,4 +67,4 @@ These are pure functions, so there are no fixtures or helpers.
 ## Not covered
 
 - **Names that don't follow a pattern.** A merchant string like "Jane Doe Photography" or an account named "Mom" passes through unchanged. Regex can't recognize arbitrary names, which is why the gateway's allowlist, not this scrub, is the main defense.
-- **Non-US phone formats and names that aren't title case.** Out of scope for Sandbox data. Add cases if real data shows them.
+- **Non-US phone formats.** Out of scope for Sandbox data. Add cases if real data shows them.

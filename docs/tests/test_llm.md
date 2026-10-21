@@ -46,9 +46,15 @@ These tests cover `app/agents/llm.py`, the only place the app creates an LLM cli
 
 ## `test_tool_exception_becomes_error_message`
 
-**What it does:** A tool that raises `ValueError("boom")` is called. The test checks that the model is told `error: boom` and that the loop finishes normally.
+**What it does:** A tool that raises `ToolException("boom")` is called. The test checks that the model is told `error: boom` and that the loop finishes normally.
 
-**Why it's there:** A tool can fail on bad arguments or a database hiccup. The model should hear about the failure and get a chance to answer anyway, rather than the user getting a server error.
+**Why it's there:** `ToolException` (and pydantic's argument `ValidationError`) is how a tool tells the model what went wrong, for example "unknown category". The model should get that message and a chance to fix its call, rather than the user getting a server error.
+
+## `test_generic_exception_message_not_forwarded`
+
+**What it does:** A tool raises a `RuntimeError` whose message looks like a SQLAlchemy error with bound parameters (`'u-jane'`). The test checks that the model is told the tool failed and the exception type, but sees neither `u-jane` nor the SQL.
+
+**Why it's there:** This loop is a way for text to reach the model without going through the privacy gateway. Database errors print their parameters, which can include user ids, emails or names. So only exceptions written for the model are forwarded, and every other error is reduced to its type, with the full detail kept in local logs. The final code review found this leak.
 
 ## `test_model_error_propagates`
 

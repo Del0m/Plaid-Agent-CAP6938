@@ -62,6 +62,7 @@ This is the smallest possible tool loop, and it exists to prove the round trip; 
 - Invoke the model again, until a reply has no tool calls.
 - Return that final `AIMessage`.
 - A tool name the model invents gets a `ToolMessage` saying the tool doesn't exist, rather than raising.
+- A tool error reaches the model only as text written for it: a `ToolException` or argument `ValidationError` message is forwarded, while any other exception becomes `error: <tool> failed (<ExceptionType>)`, with full detail in the local log. Exception text can carry user data, and this path bypasses the gateway.
 - Running past `max_steps` raises `RuntimeError("tool loop did not finish in N steps")`.
 
 ### Toy tool
@@ -94,7 +95,8 @@ Pure functions. `None` passes through unchanged.
 Purpose = Literal["accounts", "debts", "spending"]
 
 class PrivacyGateway:
-    def __init__(self, session: Session, user_id: str, audit_path: Path | None = None): ...
+    def __init__(self, session: Session, user_id: str, audit_path: Path | None = None,
+                 pseudonym: str | None = None): ...   # pass the chat session's pseudonym back in
     pseudonym: str                      # "user_" + 4 random hex chars, e.g. "user_7f3a"
     def build_context(self, purpose: Purpose, *, start: date | None = None,
                       end: date | None = None, category: str | None = None) -> str: ...
@@ -106,7 +108,7 @@ class PrivacyGateway:
 |---|---|---|
 | `accounts` | every account | `name` (scrubbed), `type`, `subtype`, `balance`, `available`, `limit` |
 | `debts` | accounts with a liability row, APR descending, unknown APR last (same order as `/dashboard`) | `name` (scrubbed), `kind`, `apr`, `balance`, `min_payment`, `next_due_date` |
-| `spending` | non-removed transactions with `start <= date <= end` (default: the last 30 days) | without `category`: `{category: total}` over positive amounts only (spending, per the sign convention). With `category`: that total plus up to 50 of that category's transactions as `date`, `amount`, `merchant` (scrubbed), newest first |
+| `spending` | non-removed transactions with `start <= date <= end` (default: the last 30 days) | without `category`: `{category: total}` over positive amounts only (spending, per the sign convention). With `category` (case-insensitive; a category with no spending returns an explicit total of 0): that total plus up to 50 of that category's transactions as `date`, `amount`, `merchant` (scrubbed), newest first |
 
 Never sent, by construction: user id, email, `password_hash`, account `mask`, `plaid_account_id`, `plaid_item_id`, access tokens, `institution_name`, internal row ids, and `pf_category_detailed`. The transactions table doesn't store Plaid's raw `name` string at all, so it can't leak.
 

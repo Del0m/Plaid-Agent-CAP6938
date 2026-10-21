@@ -1,7 +1,7 @@
 import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.tools import ToolException, tool
 
 from app import config
 from app.agents.llm import call_with_tools, get_chat_model
@@ -84,9 +84,10 @@ def test_unknown_tool_gets_error_message():
 @tool
 def broken(name: str) -> int:
     """Always fails."""
-    raise ValueError("boom")
+    raise ToolException("boom")
 
 
+# a ToolException is the tool talking to the model ("bad category"), so its text is forwarded
 def test_tool_exception_becomes_error_message():
     model = ScriptedModel(call("broken", {"name": "x"}), AIMessage("ok"))
 
@@ -94,6 +95,24 @@ def test_tool_exception_becomes_error_message():
 
     assert answer.content == "ok"
     assert "boom" in model.seen[1][-1].content
+
+
+@tool
+def leaky(name: str) -> int:
+    """Fails like a database error that carries bound parameters."""
+    raise RuntimeError("[SQL: select * from accounts where user_id=?] [parameters: ('u-jane',)]")
+
+
+# any other exception's message can carry user data (sqlalchemy prints bound parameters),
+# and this path bypasses the privacy gateway, so only the exception type reaches the model
+def test_generic_exception_message_not_forwarded():
+    model = ScriptedModel(call("leaky", {"name": "x"}), AIMessage("ok"))
+
+    call_with_tools([HumanMessage("x")], [leaky], model=model)
+
+    sent = model.seen[1][-1].content
+    assert "RuntimeError" in sent
+    assert "u-jane" not in sent and "SQL" not in sent
 
 
 # ollama going away is not something to paper over with a fake answer

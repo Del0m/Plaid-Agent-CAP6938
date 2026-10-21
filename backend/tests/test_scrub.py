@@ -22,15 +22,27 @@ def test_digit_runs():
 @pytest.mark.parametrize("raw, clean", [
     ("Zelle to Jane Doe", "Zelle to [person]"),
     ("Venmo from Bob", "Venmo from [person]"),
-    ("PayPal to Jane Doe Smith", "PayPal to [person] Smith"),
+    ("PayPal to Jane Doe Smith", "PayPal to [person]"),
     ("CASH APP TO JANE", "CASH APP TO [person]"),
+    ("Zelle payment to Jane Doe", "Zelle payment to [person]"),
+    ("Apple Cash to Jane", "Apple Cash to [person]"),
+    ("Zelle to Jane Doe 12345678", "Zelle to [person] [number]"),
 ])
 def test_p2p_counterparties(raw, clean):
     assert scrub_merchant(raw) == clean
 
 
-def test_account_possessive():
-    assert scrub_account_name("Jane's Checking") == "[person]'s Checking"
+@pytest.mark.parametrize("raw, clean", [
+    ("Jane's Checking", "[person]'s Checking"),
+    ("JANE DOE'S CHECKING", "[person]'S CHECKING"),
+    ("José's Checking", "[person]'s Checking"),
+    ("jane's checking", "[person]'s checking"),
+    ("Jane & Bob's Joint", "[person]'s Joint"),
+    ("Mary Jane Watson's Savings", "[person]'s Savings"),
+    ("Jane’s Checking", "[person]’s Checking"),
+])
+def test_account_possessive(raw, clean):
+    assert scrub_account_name(raw) == clean
 
 
 # a brand possessive in a merchant name is not a person
