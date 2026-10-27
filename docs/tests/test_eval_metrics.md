@@ -151,3 +151,15 @@ The same three rules apply to `sources_ok` with `source_url`s.
 **What it does:** Scoring a normal run calls the judge and stores its scores, with `judge_passed` true.
 
 **Why it's there:** It connects the judge to `score_run`, the function the CLI calls.
+
+## `test_judge_told_when_expected_tools_missing`
+
+**What it does:** With `missing_tools=["get_debts"]`, the judge's prompt says the assistant did not look up the user's data with `get_debts`.
+
+**Why it's there:** In the first real run, an answer that never looked at the user's debts was scored fully "consistent with data", because there were no numbers to contradict. The rubric now caps `consistent_with_data` at 2 when this note is present.
+
+## `test_score_run_passes_missing_tools_to_judge`
+
+**What it does:** When a scenario expects `get_debts` and the run never called it, `score_run` passes that to the judge.
+
+**Why it's there:** It connects the scenario's expected tools to the judge's note in the path the CLI actually runs.

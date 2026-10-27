@@ -98,3 +98,37 @@ Run them from `backend/`:
 ## Not covered
 
 - How a real model behaves on these rows. That's `test_live_debt_highest_apr` in `test_eval_runner.py`.
+
+---
+
+## Added after the final review
+
+## `test_empty_text_fact_rejected`
+
+**What it does:** `{"text": ""}` is rejected, naming `facts`.
+
+**Why it's there:** An empty string is a substring of every answer, so the fact would always pass.
+
+## `test_forbid_must_be_list_of_strings`
+
+**What it does:** `forbid` given as the bare string `"http"`, as `[""]`, or as `[3]` is rejected (parametrized). `tools` and `sources` follow the same rule.
+
+**Why it's there:** A bare string would be split into single characters, so almost every answer would hit a "forbidden" letter. An empty string would fail every answer.
+
+## `test_non_numeric_number_fact_rejected`
+
+**What it does:** `{"number": "abc"}` raises `ScenarioError` naming `facts`, not a bare `ValueError`.
+
+**Why it's there:** `run_eval.py` reports `ScenarioError`s cleanly and exits 2. Any other exception would surface as a traceback.
+
+## `test_liability_without_kind_rejected`
+
+**What it does:** A liability with no `kind` is rejected at load time, naming `kind`.
+
+**Why it's there:** Otherwise seeding fails inside every run, so each run is recorded as an error instead of the scenario being rejected once, up front.
+
+## `test_text_facts_not_in_question`
+
+**What it does:** For every committed scenario, no text fact appears in the scenario's own question.
+
+**Why it's there:** An answer that just repeats the question would pass such a fact. The final review found two ("Roth" and "emergency fund"). They were replaced with facts only a real answer contains: "tax-free", and the user's $900 savings balance.

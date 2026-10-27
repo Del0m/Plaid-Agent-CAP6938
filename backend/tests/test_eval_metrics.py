@@ -187,3 +187,17 @@ def test_score_run_uses_judge():
     s = score_run(record(answer="Pay the Platinum Card at 24.99%."), scenario(),
                   embeddings=FakeEmbeddings([[1.0, 0.0], [1.0, 0.0]]), judge_model=model)
     assert s["judge_passed"] is True and s["judge"]["consistent_with_data"] == 5
+
+
+def test_judge_told_when_expected_tools_missing():
+    model = ScriptedChatModel(replies=[AIMessage(GOOD)])
+    judge("Card or emergency fund?", [], "Generic advice.", model, missing_tools=["get_debts"])
+    prompt = model.seen[0][-1].content
+    assert "did not look up" in prompt and "get_debts" in prompt
+
+
+def test_score_run_passes_missing_tools_to_judge():
+    model = ScriptedChatModel(replies=[AIMessage(GOOD)])
+    sc = scenario(expect=expect([Fact(text="x")], tools=["get_debts"]))
+    score_run(record(answer="Generic advice."), sc, embeddings=FakeEmbeddings([[1.0], [1.0]]), judge_model=model)
+    assert "get_debts" in model.seen[0][-1].content

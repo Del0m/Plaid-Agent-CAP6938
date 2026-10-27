@@ -68,8 +68,22 @@ def _fact(path: Path, i: int, raw) -> Fact:
     if not isinstance(raw, dict) or ("text" in raw) == ("number" in raw):
         _fail(path, field, "needs exactly one of text or number")
     if "text" in raw:
-        return Fact(text=str(raw["text"]))
-    return Fact(number=float(raw["number"]), tol=float(raw.get("tol", 0)))
+        # an empty text fact is a substring of every answer, so it would always pass
+        if not isinstance(raw["text"], str) or not raw["text"].strip():
+            _fail(path, field, "text must be a non-empty string")
+        return Fact(text=raw["text"])
+    try:
+        return Fact(number=float(raw["number"]), tol=float(raw.get("tol", 0)))
+    except (TypeError, ValueError):
+        _fail(path, field, "number and tol must be numbers")
+
+
+# a bare string would become a list of characters, and "" matches every answer
+def _strings(path: Path, exp: dict, key: str) -> list[str]:
+    value = exp.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+        _fail(path, f"expect.{key}", "must be a list of non-empty strings")
+    return value
 
 
 def _check_user(path: Path, user: dict) -> None:
@@ -80,6 +94,8 @@ def _check_user(path: Path, user: dict) -> None:
         names.add(_require(path, a, "name", str, where))
         _require(path, a, "type", str, where)
         _require(path, a, "balance", (int, float), where)
+        if "liability" in a:
+            _require(path, _require(path, a, "liability", dict, where), "kind", str, where + "liability.")
     for i, t in enumerate(user.get("transactions", [])):
         where = f"user.transactions[{i}]."
         if _require(path, t, "account", str, where) not in names:
@@ -109,9 +125,8 @@ def load_scenario(path: Path) -> Scenario:
     facts = _require(path, exp, "facts", list, "expect.")
     if not facts:
         _fail(path, "expect.facts", "must not be empty")
-    expect = Expect(facts=[_fact(path, i, f) for i, f in enumerate(facts)],
-                    forbid=list(exp.get("forbid", [])), tools=list(exp.get("tools", [])),
-                    sources=list(exp.get("sources", [])))
+    expect = Expect(facts=[_fact(path, i, f) for i, f in enumerate(facts)], forbid=_strings(path, exp, "forbid"),
+                    tools=_strings(path, exp, "tools"), sources=_strings(path, exp, "sources"))
     return Scenario(id=sid, question=question, user=user, golden_answer=golden, expect=expect, path=path)
 
 

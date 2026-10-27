@@ -122,3 +122,29 @@ def test_only_unknown_id_rejected(tmp_path):
 
 def test_committed_scenarios_load():
     assert len(load_scenarios(REPO / "eval" / "scenarios")) == 5
+
+
+# --- final-review fixes ---
+
+def test_empty_text_fact_rejected(tmp_path):
+    rejected(write(tmp_path, lambda d: d["expect"].update(facts=[{"text": ""}])), "facts")
+
+
+@pytest.mark.parametrize("forbid", ["http", [""], [3]])
+def test_forbid_must_be_list_of_strings(tmp_path, forbid):
+    rejected(write(tmp_path, lambda d: d["expect"].update(forbid=forbid)), "forbid")
+
+
+def test_non_numeric_number_fact_rejected(tmp_path):
+    rejected(write(tmp_path, lambda d: d["expect"].update(facts=[{"number": "abc"}])), "facts")
+
+
+def test_liability_without_kind_rejected(tmp_path):
+    rejected(write(tmp_path, lambda d: d["user"]["accounts"][2]["liability"].pop("kind")), "kind")
+
+
+# a text fact the question already contains passes on any answer that echoes the question
+def test_text_facts_not_in_question():
+    for s in load_scenarios(REPO / "eval" / "scenarios"):
+        for f in s.expect.facts:
+            assert f.text is None or f.text.lower() not in s.question.lower(), (s.id, f.text)
