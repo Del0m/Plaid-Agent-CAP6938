@@ -1,0 +1,57 @@
+{
+  "record": {
+    "scenario_id": "kb-roth-vs-401k",
+    "run": 1,
+    "answer": "A Roth IRA and a 401(k) differ in several ways:\n\n- **Contributions**: Roth IRA contributions are made with after-tax dollars, while traditional 401(k) contributions are made with pre-tax dollars.\n- **Income Limits**: There are income limits for contributing to a Roth IRA, but no income limits for contributing to a 401(k).\n- **Contribution Limits**: The annual contribution limit for a Roth IRA is $7,000 ($6,500 for those under 50), while for a 401(k) it is $23,000 ($30,500 for those over 50).\n- **Taxation of Withdrawals**: Roth IRA withdrawals are tax-free if they are qualified, while 401(k) withdrawals are taxed as income.\n- **Required Distributions**: Roth IRAs do not require minimum distributions during the owner's lifetime, whereas 401(k)s do.\n\nThis is general information, not financial advice.",
+    "tool_calls": [],
+    "tool_results": [],
+    "sources": [
+      {
+        "title": "Roth comparison chart | Internal Revenue Service",
+        "section": "Roth 401(k), Roth IRA, and pre-tax 401(k) retirement accounts",
+        "source_url": "https://www.irs.gov/retirement-plans/roth-comparison-chart",
+        "text": "Contributions — Designated Roth 401(k): Designated Roth employee elective contributions are made with after-tax dollars.; Roth IRA: Roth IRA contributions are made with after-tax dollars.; Pre-tax 401(k): Traditional, pre-tax employee elective contributions are made with before-tax dollars.\n\nIncome limits — Designated Roth 401(k): No income limitation to participate.; Roth IRA: Income limits: 2024 – modified AGI married $240,000/single $161,000, 2023 – modified AGI married $228,000/single $153,000, 2022 – modified AGI married $214,000/single $144,000, 2021 - modified AGI married $208,000/single $140,000; Pre-tax 401(k): No income limitation to participate.\n\nMaximum elective contribution — Designated Roth 401(k): Aggregate* employee elective contributions limited to $23,000 in 2024; $22,500 in 2023; $20,500 in 2022; $19,500 in 2021 (plus an additional $6,500 in 2022 and 2021 for employees age 50 or over; additional $7,500 in 2023 and 2024 for employees age 50 or over).; Roth IRA: Contribution limited to $7,000 plus an additional $1,000 for employees age 50 or older in 2024; $6,500 plus an additional $1,000 for employees age 50 or older in 2023; $6,000 plus an additional $1,000 for employees age 50 or over in 2021 and 2022.; Pre-tax 401(k): Same aggregate* limit as designated Roth 401(k) account\n\nTaxation of withdrawals — Designated Roth 401(k): Withdrawals of contributions and earnings are not taxed provided it’s a qualified distribution – the account is held for at least 5 years and made: On account of disability,, On or after death, or, On or after attainment of age 59½.; Roth IRA: Same as designated Roth 401(k) account and can have a qualified distribution for a first-time home purchase.; Pre-tax 401(k): Withdrawals of contributions and earnings are subject to federal and most state income taxes.\n\nRequired distributions — Designated Roth 401(k): Distributions must begin no later than age 72 (age 70 ½ if reached age 70 ½ before January 1, 2020), unless still working and not a 5% owner.; Roth IRA: No requirement to start taking distributions while owner is alive.; Pre-tax 401(k): Same as designated Roth 401(k) account."
+      },
+      {
+        "title": "Roth comparison chart | Internal Revenue Service",
+        "section": "Roth 401(k), Roth IRA, and pre-tax 401(k) retirement accounts",
+        "source_url": "https://www.irs.gov/retirement-plans/roth-comparison-chart",
+        "text": "½ if reached age 70 ½ before January 1, 2020), unless still working and not a 5% owner.; Roth IRA: No requirement to start taking distributions while owner is alive.; Pre-tax 401(k): Same as designated Roth 401(k) account.\n\n* This limitation is by individual, rather than by plan. You can split your annual elective deferrals between designated Roth contributions and traditional pre-tax contributions, but your combined contributions can’t exceed the deferral limit - $23,000 in 2024; $22,500 in 2023; $20,500 in 2022; $19,500 in 2021 ($30,500 in 2024; $30,000 in 2023; $27,000 in 2022; $26,000 in 2021 if you're eligible for catch-up contributions)."
+      },
+      {
+        "title": "Roth IRAs | Internal Revenue Service",
+        "section": "Roth IRAs | Internal Revenue Service",
+        "source_url": "https://www.irs.gov/retirement-plans/roth-iras",
+        "text": "A Roth IRA is an IRA that, except as explained below, is subject to the rules that apply to a traditional IRA.\n\n-\nYou cannot deduct contributions to a Roth IRA.\n-\nIf you satisfy the requirements, qualified distributions are tax-free.\n-\nYou can make contributions to your Roth IRA after you reach age 70 ½.\n-\nYou can leave amounts in your Roth IRA as long as you live.\n-\nThe account or annuity must be designated as a Roth IRA when it is set up.\n\nThe same combined contribution limit applies to all of your Roth and traditional IRAs."
+      },
+      {
+        "title": "Traditional and Roth IRAs | Internal Revenue Service",
+        "section": "Roth IRAs",
+        "source_url": "https://www.irs.gov/retirement-plans/traditional-and-roth-iras",
+        "text": "None if it’s a qualified distribution (or a withdrawal that is a qualified distribution). Otherwise, part of the distribution or withdrawal may be taxable. If you are under age 59 ½, you may also have to pay an additional 10% tax for early withdrawals unless you qualify for an exception."
+      }
+    ],
+    "latency_s": 16.652790624881163,
+    "error": null
+  },
+  "scores": {
+    "facts": {
+      "found": 2,
+      "total": 2,
+      "missing": [],
+      "forbidden_hits": [],
+      "passed": true,
+      "score": 1.0
+    },
+    "tools_ok": true,
+    "sources_ok": true,
+    "similarity": 0.9533308454731659,
+    "judge": {
+      "coherent": 5,
+      "consistent_with_data": 5,
+      "safe": 5,
+      "reason": "The answer clearly explains the differences between a Roth IRA and a 401(k) using accurate and standard information."
+    },
+    "judge_passed": true
+  }
+}

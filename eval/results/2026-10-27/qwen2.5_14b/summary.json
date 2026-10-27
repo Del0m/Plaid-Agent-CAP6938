@@ -1,0 +1,132 @@
+{
+  "overall": {
+    "runs": 15,
+    "errors": 0,
+    "fact_pass_rate": 0.6,
+    "fact_score_mean": 0.8333333333333334,
+    "similarity_mean": 0.947697399553648,
+    "similarity_at_target_rate": 1.0,
+    "judge_pass_rate": 1.0,
+    "judge_means": {
+      "coherent": 5,
+      "consistent_with_data": 5,
+      "safe": 5
+    },
+    "tool_accuracy": 0.8,
+    "source_accuracy": 1.0,
+    "latency_mean_s": 10.505278805410489,
+    "latency_p95_s": 16.652790624881163
+  },
+  "scenarios": {
+    "debt-highest-apr": {
+      "runs": 3,
+      "errors": 0,
+      "fact_pass_rate": 0.0,
+      "fact_score_mean": 0.6666666666666666,
+      "similarity_mean": 0.9395366494202669,
+      "similarity_at_target_rate": 1.0,
+      "judge_pass_rate": 1.0,
+      "judge_means": {
+        "coherent": 5,
+        "consistent_with_data": 5,
+        "safe": 5
+      },
+      "tool_accuracy": 1.0,
+      "source_accuracy": 1.0,
+      "latency_mean_s": 9.887093083312115,
+      "latency_p95_s": 12.205249415943399,
+      "similarity_min": 0.9395366494202669,
+      "similarity_max": 0.9395366494202669,
+      "fact_score_min": 0.6666666666666666,
+      "fact_score_max": 0.6666666666666666
+    },
+    "kb-roth-vs-401k": {
+      "runs": 3,
+      "errors": 0,
+      "fact_pass_rate": 1.0,
+      "fact_score_mean": 1.0,
+      "similarity_mean": 0.9533308454731659,
+      "similarity_at_target_rate": 1.0,
+      "judge_pass_rate": 1.0,
+      "judge_means": {
+        "coherent": 5,
+        "consistent_with_data": 5,
+        "safe": 5
+      },
+      "tool_accuracy": 1.0,
+      "source_accuracy": 1.0,
+      "latency_mean_s": 15.458114944398403,
+      "latency_p95_s": 16.652790624881163,
+      "similarity_min": 0.9533308454731659,
+      "similarity_max": 0.9533308454731659,
+      "fact_score_min": 1.0,
+      "fact_score_max": 1.0
+    },
+    "mixed-card-vs-emergency": {
+      "runs": 3,
+      "errors": 0,
+      "fact_pass_rate": 0.0,
+      "fact_score_mean": 0.5,
+      "similarity_mean": 0.8551805102242391,
+      "similarity_at_target_rate": 1.0,
+      "judge_pass_rate": 1.0,
+      "judge_means": {
+        "coherent": 5,
+        "consistent_with_data": 5,
+        "safe": 5
+      },
+      "tool_accuracy": 0.0,
+      "source_accuracy": 1.0,
+      "latency_mean_s": 10.22101170841294,
+      "latency_p95_s": 10.294544500065967,
+      "similarity_min": 0.8551805102242391,
+      "similarity_max": 0.8551805102242391,
+      "fact_score_min": 0.5,
+      "fact_score_max": 0.5
+    },
+    "savings-balance": {
+      "runs": 3,
+      "errors": 0,
+      "fact_pass_rate": 1.0,
+      "fact_score_mean": 1.0,
+      "similarity_mean": 0.9956991728413066,
+      "similarity_at_target_rate": 1.0,
+      "judge_pass_rate": 1.0,
+      "judge_means": {
+        "coherent": 5,
+        "consistent_with_data": 5,
+        "safe": 5
+      },
+      "tool_accuracy": 1.0,
+      "source_accuracy": 1.0,
+      "latency_mean_s": 7.364745235613857,
+      "latency_p95_s": 8.263972083106637,
+      "similarity_min": 0.9956991728413066,
+      "similarity_max": 0.9956991728413066,
+      "fact_score_min": 1.0,
+      "fact_score_max": 1.0
+    },
+    "spending-food-30d": {
+      "runs": 3,
+      "errors": 0,
+      "fact_pass_rate": 1.0,
+      "fact_score_mean": 1.0,
+      "similarity_mean": 0.9947398198092613,
+      "similarity_at_target_rate": 1.0,
+      "judge_pass_rate": 1.0,
+      "judge_means": {
+        "coherent": 5,
+        "consistent_with_data": 5,
+        "safe": 5
+      },
+      "tool_accuracy": 1.0,
+      "source_accuracy": 1.0,
+      "latency_mean_s": 9.595429055315131,
+      "latency_p95_s": 11.621333750197664,
+      "similarity_min": 0.9947398198092613,
+      "similarity_max": 0.9947398198092613,
+      "fact_score_min": 1.0,
+      "fact_score_max": 1.0
+    }
+  }
+}

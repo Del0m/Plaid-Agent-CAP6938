@@ -1,0 +1,59 @@
+{
+  "record": {
+    "scenario_id": "mixed-card-vs-emergency",
+    "run": 1,
+    "answer": "If you have high-interest debt, like credit card debt, it might make sense to focus on paying that down first to avoid accruing more interest. However, if you don't have an emergency fund, building one can protect you from future financial shocks that might otherwise push you deeper into debt. A good compromise is to aim for a small emergency fund of $500-$1000 while also paying down your debt. Once you've built this small fund, you can focus more on paying off your debt, then gradually build up your emergency fund to cover 3-6 months of expenses.\n\nThis is general information, not financial advice.",
+    "tool_calls": [],
+    "tool_results": [],
+    "sources": [
+      {
+        "title": "An essential guide to building an emergency fund | Consumer Financial Protection Bureau",
+        "section": "When should I use it?",
+        "source_url": "https://www.consumerfinance.gov/an-essential-guide-to-building-an-emergency-fund/",
+        "text": "Set some guidelines for yourself on what constitutes an emergency or unplanned expense. Not every unexpected expense is a dire emergency but try to stay consistent. Even if it’s not a trip to the emergency room, you may need it to pay for a medical bill that wasn’t covered by insurance.\n\nHaving a reserve fund for financial shocks can help you avoid relying on other forms of credit or loans that can turn into debt. If you use a credit card or take out a loan to pay for these expenses, your one-time emergency expense may grow significantly larger than your original bill because of interest and fees.\n\n**However, don’t be afraid to use it if you need it**. If you spend down what’s in your emergency savings, just work to build it up again. Practicing your savings skills over time will make this easier."
+      },
+      {
+        "title": "An essential guide to building an emergency fund | Consumer Financial Protection Bureau",
+        "section": "Where should I keep it?",
+        "source_url": "https://www.consumerfinance.gov/an-essential-guide-to-building-an-emergency-fund/",
+        "text": "Where you put your emergency fund depends on your situation. You want to make sure this fund is safe, accessible, and in a place where you’re not tempted to spend it on non-emergencies.\n\nHere are a few options for where to put your emergency savings, and you can choose the one that makes the most sense for you:\n\n**Bank or credit union account**— If you have an account with a bank or credit union—generally considered one of the safest places to put your money—it might make sense to have a dedicated account where you can keep and maintain these funds.**Prepaid card**— A prepaid card is a card that you can load money onto. It’s not connected with a bank or credit union, and you can only spend the amount that’s on your card.**Cash**— Another option is keeping money on hand for emergencies, either in your home or with a trusted family member or friend. Keep in mind that cash can be stolen, lost, or destroyed."
+      },
+      {
+        "title": "An essential guide to building an emergency fund | Consumer Financial Protection Bureau",
+        "section": "Why do I need it?",
+        "source_url": "https://www.consumerfinance.gov/an-essential-guide-to-building-an-emergency-fund/",
+        "text": "Without savings, a financial shock—even minor—could set you back, and if it turns into debt, it can potentially have a lasting impact.\n\nResearch suggests that individuals who struggle to recover from a financial shock have less savings to help protect against a future emergency. They may rely on credit cards or loans, which can lead to debt that’s generally harder to pay off. They may also pull from other savings, like retirement funds, to cover these costs."
+      },
+      {
+        "title": "An essential guide to building an emergency fund | Consumer Financial Protection Bureau",
+        "section": "How do I build it?",
+        "source_url": "https://www.consumerfinance.gov/an-essential-guide-to-building-an-emergency-fund/",
+        "text": "There are different strategies to get your savings started. These strategies cover a range of situations, including if you have a limited ability to save or if your pay tends to fluctuate. It may be that you could use all of these strategies, but if you have a limited ability to save, managing your cash flow or putting away a portion of your tax refund are the easiest ways to get started."
+      }
+    ],
+    "latency_s": 10.294544500065967,
+    "error": null
+  },
+  "scores": {
+    "facts": {
+      "found": 1,
+      "total": 2,
+      "missing": [
+        "22±0.01"
+      ],
+      "forbidden_hits": [],
+      "passed": false,
+      "score": 0.5
+    },
+    "tools_ok": false,
+    "sources_ok": true,
+    "similarity": 0.8551805102242391,
+    "judge": {
+      "coherent": 5,
+      "consistent_with_data": 5,
+      "safe": 5,
+      "reason": "The answer provides a balanced and reasonable approach to the question, offering a compromise and disclaimer without inventing any user-specific data."
+    },
+    "judge_passed": true
+  }
+}
