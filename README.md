@@ -27,6 +27,19 @@ The browser only talks to the Next.js server. It forwards `/api/*` to FastAPI on
 
 To try it: open http://localhost:3000, click **Connect a bank**, pick **First Platypus Bank**, and log in with `user_good` / `pass_good`.
 
+## Knowledge base
+
+The chat agent's `search_kb` tool reads public financial guidance from a local Chroma store. One-time setup, from `backend/`:
+
+```bash
+ollama pull nomic-embed-text
+../venv/bin/python scripts/fetch_kb.py      # fetches only what isn't in kb/sources/ yet (on a fresh clone: the git-ignored copyrighted page)
+../venv/bin/python scripts/ingest_kb.py     # rebuilds kb/chroma/ from kb/sources/
+../venv/bin/python scripts/search_kb.py "Roth IRA vs 401k"
+```
+
+Run `fetch_kb.py --refresh` to update the saved pages (for example, when the IRS publishes new contribution limits), read the changed files, then ingest again. The sources are listed in `kb/sources.json`.
+
 ## Demo on a phone
 
 1. Build and serve the web app on every network interface:
