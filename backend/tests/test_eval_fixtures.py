@@ -120,6 +120,5 @@ def test_only_unknown_id_rejected(tmp_path):
         load_scenarios(tmp_path, only="nope")
 
 
-@pytest.mark.xfail(strict=True, reason="the five scenario files arrive in Task 6")
 def test_committed_scenarios_load():
     assert len(load_scenarios(REPO / "eval" / "scenarios")) == 5

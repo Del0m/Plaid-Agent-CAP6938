@@ -1,0 +1,23 @@
+{
+  "id": "spending-food-30d",
+  "question": "How much did I spend on food and drink in the last 30 days?",
+  "user": {
+    "accounts": [
+      {"name": "Everyday Checking", "type": "depository", "subtype": "checking", "balance": 1840.00}
+    ],
+    "transactions": [
+      {"account": "Everyday Checking", "days_ago": 4, "amount": 42.10, "category": "FOOD_AND_DRINK", "merchant": "Chipotle"},
+      {"account": "Everyday Checking", "days_ago": 11, "amount": 18.75, "category": "FOOD_AND_DRINK", "merchant": "Starbucks"},
+      {"account": "Everyday Checking", "days_ago": 20, "amount": 63.40, "category": "FOOD_AND_DRINK", "merchant": "Trader Joe's"},
+      {"account": "Everyday Checking", "days_ago": 6, "amount": -12.50, "category": "FOOD_AND_DRINK", "merchant": "Chipotle"},
+      {"account": "Everyday Checking", "days_ago": 40, "amount": 55.00, "category": "FOOD_AND_DRINK", "merchant": "Olive Garden"},
+      {"account": "Everyday Checking", "days_ago": 9, "amount": 120.00, "category": "TRANSPORTATION", "merchant": "Shell"}
+    ]
+  },
+  "golden_answer": "You spent $124.25 on food and drink in the last 30 days: $63.40 at Trader Joe's, $42.10 at Chipotle and $18.75 at Starbucks. This is general information, not financial advice.",
+  "expect": {
+    "facts": [{"number": 124.25, "tol": 0.01}],
+    "forbid": ["http"],
+    "tools": ["get_spending"]
+  }
+}

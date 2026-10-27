@@ -1,0 +1,22 @@
+{
+  "id": "debt-highest-apr",
+  "question": "Which of my debts should I pay off first?",
+  "user": {
+    "accounts": [
+      {"name": "Everyday Checking", "type": "depository", "subtype": "checking", "balance": 2150.00},
+      {"name": "Platinum Card", "type": "credit", "subtype": "credit card", "balance": 3200.00,
+       "liability": {"kind": "credit", "apr": 24.99, "min_payment": 95.00, "due_in_days": 12}},
+      {"name": "Student Loan", "type": "loan", "subtype": "student", "balance": 18400.00,
+       "liability": {"kind": "student", "apr": 5.5, "min_payment": 210.00, "due_in_days": 20}}
+    ],
+    "transactions": [
+      {"account": "Everyday Checking", "days_ago": 4, "amount": 42.10, "category": "FOOD_AND_DRINK", "merchant": "Chipotle"}
+    ]
+  },
+  "golden_answer": "Pay off the Platinum Card first. At 24.99% APR on a $3,200 balance it costs far more in interest than the Student Loan at 5.5%, so after making the minimum payments on both, put any extra money toward the card (the avalanche method). This is general information, not financial advice.",
+  "expect": {
+    "facts": [{"text": "Platinum Card"}, {"number": 24.99, "tol": 0.01}, {"number": 3200, "tol": 1}],
+    "forbid": ["http", "nerdwallet"],
+    "tools": ["get_debts"]
+  }
+}
