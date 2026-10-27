@@ -26,6 +26,12 @@ These tests cover `app/agents/llm.py`, the only place the app creates an LLM cli
 
 **Why it's there:** The default temperature is 0 so evals are repeatable, but chat may want some variety, and benchmarks need to pick the model per run. Both paths need to work.
 
+## `test_get_embeddings_uses_config`
+
+**What it does:** Sets `OLLAMA_EMBED_MODEL` and `OLLAMA_BASE_URL` with monkeypatch, then checks that `get_embeddings()` builds an Ollama embeddings client with exactly that model and server.
+
+**Why it's there:** The knowledge base (TPC-14) embeds with whatever this returns. If it ignored config, an M5 embedding-model comparison would quietly keep using nomic-embed-text.
+
 ## `test_tool_call_round_trips`
 
 **What it does:** The fake model first asks for `get_lucky_number(name="Ada")`, then answers. The test checks that the second model call received a `ToolMessage` with content `"24"` and the matching `tool_call_id`, and that the final answer is returned.

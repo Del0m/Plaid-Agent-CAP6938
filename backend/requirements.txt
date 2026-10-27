@@ -9,3 +9,4 @@ pytest
 langchain-ollama
 trafilatura
 lxml_html_clean
+chromadb
