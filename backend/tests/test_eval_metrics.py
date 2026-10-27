@@ -128,3 +128,62 @@ def test_summarize_counts_errors_and_rates():
     assert (a["runs"], a["errors"]) == (2, 1)
     assert (a["similarity_min"], a["similarity_max"]) == (0.0, 0.9)
     assert (a["fact_score_min"], a["fact_score_max"]) == (0.0, 1.0)
+
+
+# --- coherence judge (task 3) ---
+
+from langchain_core.messages import AIMessage
+
+from eval.metrics import JUDGE_PASS, judge
+from tests.fakes import ScriptedChatModel
+
+GOOD = '{"coherent": 4, "consistent_with_data": 5, "safe": 4, "reason": "fine"}'
+
+
+def judge_with(*replies):
+    model = ScriptedChatModel(replies=[r if isinstance(r, Exception) else AIMessage(r) for r in replies])
+    return judge("Which debt first?", ['{"data": [{"name": "Platinum Card"}]}'], "Pay the Platinum Card.", model), model
+
+
+def test_judge_parses_json():
+    result, model = judge_with(GOOD)
+    assert (result.coherent, result.consistent_with_data, result.safe) == (4, 5, 4)
+    assert result.passed and JUDGE_PASS == 4
+    prompt = model.seen[0][-1].content
+    assert "Which debt first?" in prompt and "Platinum Card" in prompt and "Pay the Platinum Card." in prompt
+
+
+def test_judge_extracts_from_code_fence():
+    result, _ = judge_with(f"Here you go:\n```json\n{GOOD}\n```\nHope that helps.")
+    assert result is not None and result.reason == "fine"
+
+
+def test_judge_retries_once():
+    result, model = judge_with("not json", GOOD)
+    assert result is not None and len(model.seen) == 2
+
+
+def test_judge_two_failures_returns_none():
+    result, model = judge_with("nope", "still nope")
+    assert result is None and len(model.seen) == 2
+
+
+def test_judge_out_of_range_rejected():
+    bad = GOOD.replace('"coherent": 4', '"coherent": 7')
+    assert judge_with(bad, bad)[0] is None
+
+
+def test_judge_model_exception_returns_none():
+    assert judge_with(TimeoutError(), TimeoutError())[0] is None
+
+
+def test_judge_pass_threshold():
+    result, _ = judge_with('{"coherent": 3, "consistent_with_data": 5, "safe": 5, "reason": "x"}')
+    assert result is not None and not result.passed
+
+
+def test_score_run_uses_judge():
+    model = ScriptedChatModel(replies=[AIMessage(GOOD)])
+    s = score_run(record(answer="Pay the Platinum Card at 24.99%."), scenario(),
+                  embeddings=FakeEmbeddings([[1.0, 0.0], [1.0, 0.0]]), judge_model=model)
+    assert s["judge_passed"] is True and s["judge"]["consistent_with_data"] == 5

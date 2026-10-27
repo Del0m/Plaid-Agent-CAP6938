@@ -97,3 +97,57 @@ The same three rules apply to `sources_ok` with `source_url`s.
 - the per-scenario min and max of fact score and similarity.
 
 **Why it's there:** The summary is what goes in the writeup, so its arithmetic is pinned here rather than trusted.
+
+---
+
+## Coherence judge
+
+`judge()` sends `gemma3:12b` the question, the tool results the agent got and the answer. The judge replies with JSON scoring `coherent`, `consistent_with_data` and `safe` from 1 to 5. A run passes if all three are at least `JUDGE_PASS` (4). These tests use `ScriptedChatModel` from `tests/fakes.py` in place of the judge. `judge_with(*replies)` runs one judgement and returns the result and the fake model.
+
+## `test_judge_parses_json`
+
+**What it does:** A valid reply gives scores 4/5/4, which pass. The prompt the judge saw contains the question, the tool result and the answer.
+
+**Why it's there:** "Consistent with data" only means something if the judge sees the same numbers the agent saw.
+
+## `test_judge_extracts_from_code_fence`
+
+**What it does:** A reply that wraps the JSON in a code fence with chatty text around it still parses.
+
+**Why it's there:** Local models often add a fence or a preamble even when told not to. Rejecting those would score many good answers as "no verdict".
+
+## `test_judge_retries_once`
+
+**What it does:** "not json" followed by valid JSON gives a result after exactly 2 calls.
+
+**Why it's there:** One malformed reply is common and cheap to retry.
+
+## `test_judge_two_failures_returns_none`
+
+**What it does:** Two unparseable replies give `None` after exactly 2 calls.
+
+**Why it's there:** It caps the cost. A judge that never produces JSON can't stall the eval, and the run counts as not passing.
+
+## `test_judge_out_of_range_rejected`
+
+**What it does:** `"coherent": 7`, twice, gives `None`.
+
+**Why it's there:** A score outside 1-5 means the judge misread the rubric. Accepting it would distort the means.
+
+## `test_judge_model_exception_returns_none`
+
+**What it does:** A judge model that raises `TimeoutError` twice gives `None`, with no exception escaping.
+
+**Why it's there:** A slow or crashed judge model must not abort a 15-run evaluation partway through.
+
+## `test_judge_pass_threshold`
+
+**What it does:** Scores of 3/5/5 parse but don't pass.
+
+**Why it's there:** It pins the rule that every one of the three scores must be at least 4. A high average can't hide one weak dimension.
+
+## `test_score_run_uses_judge`
+
+**What it does:** Scoring a normal run calls the judge and stores its scores, with `judge_passed` true.
+
+**Why it's there:** It connects the judge to `score_run`, the function the CLI calls.
