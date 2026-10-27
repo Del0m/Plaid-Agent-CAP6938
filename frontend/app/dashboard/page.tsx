@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import AccountsTable from "@/components/AccountsTable";
 import BalanceChart from "@/components/BalanceChart";
@@ -77,7 +78,12 @@ export default function DashboardPage() {
     <main className="mx-auto w-full max-w-5xl space-y-6 p-4 sm:p-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold">Dashboard</h1>
-        {linked && <PlaidLinkButton label="Link another account" onLinked={onLinked} onError={onLinkError} />}
+        <div className="flex items-center gap-3">
+          <Link href="/chat" className="text-sm underline underline-offset-2">
+            Chat
+          </Link>
+          {linked && <PlaidLinkButton label="Link another account" onLinked={onLinked} onError={onLinkError} />}
+        </div>
       </header>
 
       {linkError && (
