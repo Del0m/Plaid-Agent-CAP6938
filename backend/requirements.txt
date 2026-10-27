@@ -10,3 +10,5 @@ langchain-ollama
 trafilatura
 lxml_html_clean
 chromadb
+langgraph
+langgraph-checkpoint-sqlite

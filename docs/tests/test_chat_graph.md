@@ -1,0 +1,95 @@
+# Tests: `backend/tests/test_chat_graph.py`
+
+These tests cover `app/agents/chat_graph.py`, the M2 chat agent (TPC-15). It's a hand-built LangGraph `StateGraph` with two nodes:
+- `agent` calls the model with the system prompt and the tools bound;
+- `tools` runs the requested tool calls through `_run_tool`.
+
+The graph loops between them until the model answers, with at most 6 tool rounds per question. It replaces TPC-12's temporary `call_with_tools` loop, so the tool-error rules first tested there are now tested here.
+
+Run them from `backend/`:
+
+```bash
+../venv/bin/python -m pytest tests/test_chat_graph.py -v
+```
+
+## Shared setup
+
+- `ScriptedChatModel` (`tests/fakes.py`) is a real LangChain chat model that replays scripted replies: an `AIMessage`, or an exception to raise. It records two things on every call:
+  - the messages it was sent, in `.seen`;
+  - the tools bound, in `.tools_seen` (`None` when no tools were bound).
+
+  Text replies stream word by word, so LangGraph's token streaming treats it like Ollama.
+- `tool_call(name, args, id)` builds an `AIMessage` that requests one tool call.
+- The tools:
+  - `get_lucky_number` returns `len(name) * 7 + 3`, so "Ada" gives 24, a number the model can't guess;
+  - `bad` raises `ToolException("bad arg")`;
+  - `boom` raises `RuntimeError("secret user data 4321")`, standing in for a database error that carries user data.
+- `run(model, ...)` builds the graph with a `MemorySaver` and runs one question on thread `t1`. `final(graph)` is the last stored message.
+
+---
+
+## `test_no_tool_call_returns_answer`
+
+**What it does:** Checks that a plain answer is returned, that the first message the model sees is the system prompt, and that the system prompt is never stored in the thread's messages.
+
+**Why it's there:** The system prompt carries the rules the M2 demo depends on: use the tools for the user's numbers, and cite `source_url`. Sending it on every call without storing it means a prompt change applies to existing conversations too, rather than piling up old copies in the history.
+
+## `test_tool_call_round_trips`
+
+**What it does:** The model asks for `get_lucky_number("Ada")`. The test checks that the next model call ends with a `ToolMessage` whose `tool_call_id` is `c1` and whose content is `24`, and that the model's answer is the final message.
+
+**Why it's there:** This is the ReAct loop. The tool result has to come back tagged with the id of the call that asked for it, or the model can't match answers to questions.
+
+## `test_unknown_tool_gets_error_message`
+
+**What it does:** The model calls a tool that doesn't exist. The test checks that it gets back a message starting with `error: unknown tool` and the graph carries on.
+
+**Why it's there:** Small models invent tool names. That should be a recoverable mistake, not a crash in the middle of a chat.
+
+## `test_tool_exception_text_reaches_model`
+
+**What it does:** Checks that a tool raising `ToolException("bad arg")` reaches the model as exactly `error: bad arg`.
+
+**Why it's there:** A `ToolException` is the tool talking to the model, for example "unknown category … use one of …". Its text is what lets the model fix its call.
+
+## `test_generic_exception_text_not_forwarded`
+
+**What it does:** Checks that a tool raising `RuntimeError("secret user data 4321")` reaches the model only as `error: boom failed (RuntimeError)`, and that `4321` appears in nothing the model was sent.
+
+**Why it's there:** Any other exception's text can carry user data. SQLAlchemy errors print bound parameters, for example, and this path skips the privacy gateway. This is the TPC-12 rule, now enforced by the graph.
+
+## `test_model_error_propagates`
+
+**What it does:** Checks that a model call raising `ConnectionError` raises out of the graph.
+
+**Why it's there:** If Ollama goes away, the chat endpoint has to know, so it can show "Is Ollama running?". Swallowing the error would produce an empty or made-up answer instead.
+
+## `test_round_cap_then_answer_without_tools`
+
+**What it does:** The model asks for a tool 6 times in a row. The test checks that the first 6 calls have tools bound, that a 7th call happens with **no** tools bound, and that its answer is the final message.
+
+**Why it's there:** A small model can loop on tool calls forever. Removing the tools forces it to answer from what it already has, so the user gets an answer instead of an error. The cap is 6 rounds per question.
+
+## `test_tool_rounds_reset_each_turn`
+
+**What it does:** Turn 1 uses 2 tool rounds. Turn 2 starts with `tool_rounds: 0`, and the test checks that its model call has tools bound again.
+
+**Why it's there:** The cap is per question. If the count carried over, a long conversation would eventually lose its tools for good.
+
+## `test_memory_across_turns`
+
+**What it does:** Runs two turns on one thread and checks that the second model call sees the first question and the first answer.
+
+**Why it's there:** This is the checkpointer's job. A follow-up like "and the second one?" only makes sense if the model can see the earlier turn.
+
+## `test_pseudonym_kept_in_state`
+
+**What it does:** Turn 1 stores `pseudonym="user_ab12"`. Turn 2 leaves the pseudonym out, and the test checks the stored one is unchanged.
+
+**Why it's there:** The privacy gateway's pseudonym has to stay the same for the whole conversation, or the model sees a different "user" every turn. The chat endpoint reads it from this state.
+
+## `test_live_tool_call_round_trip`
+
+**What it does:** Asks the real local model "What is Ada's lucky number? Use the tool." through the graph, and checks that the answer contains 24. It's skipped unless Ollama is running with `OLLAMA_MODEL` pulled.
+
+**Why it's there:** It proves the graph works with real tool calling on `llama3.1:8b`, not just with the fake. It replaces the `call_with_tools` live test from TPC-12, and passed on 2026-10-26.

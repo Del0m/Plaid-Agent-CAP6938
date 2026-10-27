@@ -33,3 +33,7 @@ PROMPT_AUDIT_PATH = Path(os.getenv("PROMPT_AUDIT_PATH") or Path(__file__).parent
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 # knowledge base root: sources.json, sources/ (committed), sources/local/ and chroma/ (git-ignored)
 KB_DIR = Path(os.getenv("KB_DIR") or Path(__file__).parent.parent.parent / "kb")
+# context window for the chat model; ollama's smaller default would silently cut long chats (search_kb adds ~2k tokens)
+LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX", "8192"))
+# langgraph checkpointer file: chat threads survive a backend restart (git-ignored by *.db)
+CHAT_CHECKPOINT_PATH = Path(os.getenv("CHAT_CHECKPOINT_PATH") or Path(__file__).parent.parent / "data" / "checkpoints.db")
