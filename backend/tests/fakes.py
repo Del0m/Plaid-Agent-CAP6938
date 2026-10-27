@@ -78,7 +78,7 @@ class FakeKB:
 
     def search(self, query, k=4):
         self.searches.append((query, k))
-        return [self.RESULT]
+        return [self.RESULT] if self.chunks else []   # like KnowledgeBase: nothing ingested, nothing found
 
 
 # live tests run only when ollama lists every model they need; a bare name means ":latest"

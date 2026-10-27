@@ -31,8 +31,13 @@ TOOLS = [get_lucky_number, bad, boom]
 CONFIG = {"configurable": {"thread_id": "t1"}}
 
 
-def run(model, question="q", tools=TOOLS, saver=None, **state):
-    graph = build_chat_graph(tools, model=model, checkpointer=saver or MemorySaver())
+GUIDE = {"title": "How to reduce your debt", "section": "Highest interest rate method",
+         "source_url": "https://www.consumerfinance.gov/about-us/blog/how-reduce-your-debt/",
+         "text": "Pay the debt with the highest interest rate first."}
+
+
+def run(model, question="q", tools=TOOLS, saver=None, retrieve=None, **state):
+    graph = build_chat_graph(tools, model=model, checkpointer=saver or MemorySaver(), retrieve=retrieve)
     graph.invoke({"messages": [HumanMessage(question)], "tool_rounds": 0, **state}, CONFIG)
     return graph
 
@@ -143,6 +148,54 @@ def test_pseudonym_kept_in_state():
     graph.invoke({"messages": [HumanMessage("again")], "tool_rounds": 0}, CONFIG)
 
     assert graph.get_state(CONFIG).values["pseudonym"] == "user_ab12"
+
+
+# retrieved guidance rides in the system prompt only, so old threads never carry stale guidance
+def test_retrieve_puts_guidance_in_system_prompt_not_messages():
+    model = ScriptedChatModel(replies=[AIMessage("pay the card")])
+
+    graph = run(model, question="which debt first?", retrieve=lambda q: [GUIDE])
+
+    system = model.seen[0][0].content
+    assert system.startswith(SYSTEM_PROMPT)
+    assert "Guidance retrieved for this question:" in system
+    assert "- How to reduce your debt / Highest interest rate method: Pay the debt with the highest" in system
+    assert "consumerfinance.gov" not in system   # urls are the app's job, not the model's
+    stored = graph.get_state(CONFIG).values
+    assert not any("Guidance retrieved" in str(m.content) for m in stored["messages"])
+    assert stored["sources"] == [GUIDE]
+
+
+def test_retrieve_searches_each_new_question():
+    asked = []
+    model = ScriptedChatModel(replies=[AIMessage("a"), AIMessage("b")])
+    graph = run(model, question="first?", retrieve=lambda q: asked.append(q) or [GUIDE])
+
+    graph.invoke({"messages": [HumanMessage("second?")], "tool_rounds": 0}, CONFIG)
+
+    assert asked == ["first?", "second?"]
+
+
+def test_no_guidance_when_nothing_retrieved():
+    model = ScriptedChatModel(replies=[AIMessage("a")])
+
+    run(model, retrieve=lambda q: [])
+
+    assert model.seen[0][0].content == SYSTEM_PROMPT
+
+
+# history needs each turn's sources, keyed by the question that started the turn
+def test_sources_by_turn_keyed_by_question_id():
+    model = ScriptedChatModel(replies=[AIMessage("a"), AIMessage("b")])
+    other = {**GUIDE, "title": "Other"}
+    found = iter([[GUIDE], [other]])
+    graph = run(model, question="first?", retrieve=lambda q: next(found))
+
+    graph.invoke({"messages": [HumanMessage("second?")], "tool_rounds": 0}, CONFIG)
+
+    values = graph.get_state(CONFIG).values
+    questions = [m for m in values["messages"] if isinstance(m, HumanMessage)]
+    assert values["sources_by_turn"] == {questions[0].id: [GUIDE], questions[1].id: [other]}
 
 
 # a real tool call on the local model, end to end through the graph

@@ -21,7 +21,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dev.db")
 
 # local LLM (architecture section 3); agents/llm.py is the only reader
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 # 0 keeps eval runs repeatable; chat can pass its own temperature
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 

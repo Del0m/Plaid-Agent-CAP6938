@@ -1,10 +1,11 @@
 # Tests: `backend/tests/test_chat_graph.py`
 
-These tests cover `app/agents/chat_graph.py`, the M2 chat agent (TPC-15). It's a hand-built LangGraph `StateGraph` with two nodes:
-- `agent` calls the model with the system prompt and the tools bound;
+These tests cover `app/agents/chat_graph.py`, the M2 chat agent (TPC-15). It's a hand-built LangGraph `StateGraph` with three nodes:
+- `retrieve` searches the knowledge base for the user's question;
+- `agent` calls the model with the system prompt, the retrieved guidance and the tools bound;
 - `tools` runs the requested tool calls through `_run_tool`.
 
-The graph loops between them until the model answers, with at most 6 tool rounds per question. It replaces TPC-12's temporary `call_with_tools` loop, so the tool-error rules first tested there are now tested here.
+The graph loops between `agent` and `tools` until the model answers, with at most 6 tool rounds per question. The `retrieve` step was added by spec amendment A1: in live runs, neither local model called `search_kb` on its own, and both invented citations. It replaces TPC-12's temporary `call_with_tools` loop, so the tool-error rules first tested there are now tested here.
 
 Run them from `backend/`:
 
@@ -24,13 +25,14 @@ Run them from `backend/`:
   - `get_lucky_number` returns `len(name) * 7 + 3`, so "Ada" gives 24, a number the model can't guess;
   - `bad` raises `ToolException("bad arg")`;
   - `boom` raises `RuntimeError("secret user data 4321")`, standing in for a database error that carries user data.
-- `run(model, ...)` builds the graph with a `MemorySaver` and runs one question on thread `t1`. `final(graph)` is the last stored message.
+- `run(model, ..., retrieve=None)` builds the graph with a `MemorySaver` and runs one question on thread `t1`. `final(graph)` is the last stored message.
+- `GUIDE` is one knowledge-base result (CFPB, "Highest interest rate method"), used as the retriever's output.
 
 ---
 
 ## `test_no_tool_call_returns_answer`
 
-**What it does:** Checks that a plain answer is returned, that the first message the model sees is the system prompt, and that the system prompt is never stored in the thread's messages.
+**What it does:** With no retriever, checks that a plain answer is returned, that the first message the model sees is exactly the system prompt, and that the system prompt is never stored in the thread's messages.
 
 **Why it's there:** The system prompt carries the rules the M2 demo depends on: use the tools for the user's numbers, and cite `source_url`. Sending it on every call without storing it means a prompt change applies to existing conversations too, rather than piling up old copies in the history.
 
@@ -88,8 +90,36 @@ Run them from `backend/`:
 
 **Why it's there:** The privacy gateway's pseudonym has to stay the same for the whole conversation, or the model sees a different "user" every turn. The chat endpoint reads it from this state.
 
+## `test_retrieve_puts_guidance_in_system_prompt_not_messages`
+
+**What it does:** With a retriever that returns `GUIDE`, checks that:
+- the system prompt starts with `SYSTEM_PROMPT` and then lists the guidance as `- <title> / <section>: <text>`;
+- the guidance has no URL;
+- the guidance is never stored in the thread's messages;
+- `sources` in state holds what was retrieved.
+
+**Why it's there:** The model gets the guidance as context and refers to it by title. The app, not the model, shows the URLs, so a citation can't be invented. Keeping the guidance out of stored messages means old threads never carry stale guidance.
+
+## `test_retrieve_searches_each_new_question`
+
+**What it does:** Runs two turns and checks that the retriever was called with each turn's question, in order.
+
+**Why it's there:** Guidance has to match the question being asked now, not the first question of the conversation.
+
+## `test_no_guidance_when_nothing_retrieved`
+
+**What it does:** Checks that when nothing is retrieved, the system prompt is exactly `SYSTEM_PROMPT`.
+
+**Why it's there:** An empty knowledge base shouldn't put an empty "Guidance" heading in front of the model, which would invite it to make guidance up.
+
+## `test_sources_by_turn_keyed_by_question_id`
+
+**What it does:** Runs two turns with different results and checks that `sources_by_turn` maps each user message's id to that turn's sources.
+
+**Why it's there:** `GET /chat/{id}` uses this to show each answer's own sources after a refresh. `sources` alone only holds the latest turn's.
+
 ## `test_live_tool_call_round_trip`
 
 **What it does:** Asks the real local model "What is Ada's lucky number? Use the tool." through the graph, and checks that the answer contains 24. It's skipped unless Ollama is running with `OLLAMA_MODEL` pulled.
 
-**Why it's there:** It proves the graph works with real tool calling on `llama3.1:8b`, not just with the fake. It replaces the `call_with_tools` live test from TPC-12, and passed on 2026-10-26.
+**Why it's there:** It proves the graph works with real tool calling on `llama3.1:8b`, not just with the fake. It replaces the `call_with_tools` live test from TPC-12. It passed on 2026-10-26 on `llama3.1:8b`, and again after the chat model became `qwen2.5:14b`.
