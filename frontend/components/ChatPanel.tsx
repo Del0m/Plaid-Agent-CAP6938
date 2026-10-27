@@ -16,13 +16,20 @@ import {
 
 export const THREAD_KEY = "chatThreadId";
 const BUSY = "Still answering the last message.";
+const DROPPED = "Lost the connection to the server. Try again.";
+
+// randomUUID only exists in secure contexts (https, localhost); the phone demo is plain http on the lan
+function randomId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 type Tool = ChatTool & { id?: string; pending?: boolean };
 type Turn = { role: "user" | "assistant"; text: string; tools: Tool[]; sources: ChatSource[]; error?: boolean };
 
 // storage can throw (private mode, blocked site data); chat still works for the life of the page
 function newThreadId(): string {
-  const id = crypto.randomUUID();
+  const id = randomId();
   try {
     sessionStorage.setItem(THREAD_KEY, id);
   } catch {
@@ -146,7 +153,8 @@ export default function ChatPanel() {
     try {
       await streamChat(thread, text, (ev) => setTurns((t) => applyEvent(t, ev)));
     } catch (err) {
-      const message = err instanceof ApiError && err.status === 409 ? BUSY : errorMessage(err);
+      // anything that isn't an http status is the stream itself breaking ("terminated", "Load failed")
+      const message = err instanceof ApiError ? (err.status === 409 ? BUSY : errorMessage(err)) : DROPPED;
       setTurns((t) => applyEvent(t, { event: "error", data: { message } }));
     } finally {
       setStreaming(false);

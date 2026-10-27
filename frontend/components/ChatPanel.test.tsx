@@ -175,6 +175,36 @@ describe("ChatPanel", () => {
     expect(screen.queryByText("Old question")).toBeNull();
   });
 
+  // crypto.randomUUID only exists on https and localhost; the phone demo opens http://<lan-ip>:3000
+  test("works when crypto.randomUUID is unavailable", async () => {
+    vi.restoreAllMocks();
+    const original = Object.getOwnPropertyDescriptor(crypto, "randomUUID");
+    Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+    try {
+      replyWith([{ event: "token", data: { text: "Works on the phone." } }, { event: "done", data: {} }]);
+      render(<ChatPanel />);
+      await send();
+
+      expect(await screen.findByText("Works on the phone.")).toBeDefined();
+      const threadId = streamMock.mock.calls[0][0];
+      expect(threadId).toMatch(/^[A-Za-z0-9-]{1,64}$/);
+    } finally {
+      // jsdom defines randomUUID on Crypto.prototype, so usually there's no own property to put back
+      if (original) Object.defineProperty(crypto, "randomUUID", original);
+      else delete (crypto as { randomUUID?: unknown }).randomUUID;
+    }
+  });
+
+  // the browser reports a dropped stream as a bare "terminated" or "Load failed"
+  test("shows a plain note when the connection drops", async () => {
+    streamMock.mockRejectedValue(new TypeError("terminated"));
+    render(<ChatPanel />);
+    await send();
+
+    expect(await screen.findByText("Lost the connection to the server. Try again.")).toBeDefined();
+    expect(screen.queryByText("terminated")).toBeNull();
+  });
+
   // safari private mode and blocked site data make storage throw; chat must still work
   test("works when sessionStorage throws", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {

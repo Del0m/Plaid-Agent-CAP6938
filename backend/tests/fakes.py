@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from typing import Any, Optional
 
 import httpx
@@ -23,6 +24,7 @@ class ScriptedChatModel(BaseChatModel):
     seen: list = Field(default_factory=list)      # messages sent, one list per call
     tools_seen: list = Field(default_factory=list)  # tool names bound on each call, None if unbound
     gate: Optional[threading.Event] = None         # first reply waits on it (holds a stream open)
+    token_delay: float = 0.0                       # pause between streamed words (a slow model mid-answer)
 
     @property
     def _llm_type(self) -> str:
@@ -53,6 +55,8 @@ class ScriptedChatModel(BaseChatModel):
             return
         words = reply.content.split(" ")
         for i, word in enumerate(words):
+            if i:
+                time.sleep(self.token_delay)
             text = word if i == len(words) - 1 else word + " "
             chunk = ChatGenerationChunk(message=AIMessageChunk(content=text))
             if run_manager:

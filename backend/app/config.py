@@ -37,3 +37,7 @@ KB_DIR = Path(os.getenv("KB_DIR") or Path(__file__).parent.parent.parent / "kb")
 LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX", "8192"))
 # langgraph checkpointer file: chat threads survive a backend restart (git-ignored by *.db)
 CHAT_CHECKPOINT_PATH = Path(os.getenv("CHAT_CHECKPOINT_PATH") or Path(__file__).parent.parent / "data" / "checkpoints.db")
+# cap on tokens per model reply: a repetition loop would otherwise run (and hold the user's chat lock) forever
+LLM_NUM_PREDICT = int(os.getenv("LLM_NUM_PREDICT", "1024"))
+# seconds the ollama client waits on a response; a cold 14b model on a busy machine can take minutes
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "300"))

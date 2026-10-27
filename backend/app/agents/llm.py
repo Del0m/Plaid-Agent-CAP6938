@@ -21,6 +21,8 @@ def get_chat_model(temperature: Optional[float] = None, model: Optional[str] = N
         base_url=config.OLLAMA_BASE_URL,
         temperature=config.LLM_TEMPERATURE if temperature is None else temperature,
         num_ctx=num_ctx or config.LLM_NUM_CTX,
+        num_predict=config.LLM_NUM_PREDICT,
+        client_kwargs={"timeout": config.LLM_TIMEOUT_SECONDS},
     )
 
 

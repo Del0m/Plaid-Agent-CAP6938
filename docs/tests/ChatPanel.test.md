@@ -82,6 +82,18 @@ npm test -- components/ChatPanel.test.tsx
 
 **Why it's there:** This was a real bug, found while writing the tests above. The history request from mount resolved after the first send and wiped out the new turns. A person who types fast on a slow connection would have watched their message disappear.
 
+## `works when crypto.randomUUID is unavailable`
+
+**What it does:** Removes `crypto.randomUUID` and checks that a send still streams an answer, with a thread id that matches the backend's `^[A-Za-z0-9-]{1,64}$`.
+
+**Why it's there:** `randomUUID` only exists on HTTPS and localhost. The README's phone demo opens `http://<lan-ip>:3000`, where the page crashed with "a client-side exception has occurred". It now falls back to `crypto.getRandomValues`. Found in the final review; jsdom has `randomUUID`, so no earlier test could see it.
+
+## `shows a plain note when the connection drops`
+
+**What it does:** Makes `streamChat` reject with `TypeError("terminated")`, as a browser does when a stream is cut. It checks that the bubble says "Lost the connection to the server. Try again." and not the raw "terminated".
+
+**Why it's there:** A dropped stream (a proxy timeout, a backend restart) used to show the browser's own word ("terminated", "Load failed", "network error"), which means nothing to a person.
+
 ## `works when sessionStorage throws`
 
 **What it does:** Makes `sessionStorage.getItem` and `setItem` throw, as Safari private mode or blocked site data does. It checks that a send still streams an answer, using an in-memory thread id.

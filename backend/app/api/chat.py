@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import sqlite3
@@ -11,7 +12,6 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import BaseModel, Field, StringConstraints
-from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from .. import config
 from ..agents.chat_graph import build_chat_graph
 from ..agents.tools import make_tools
@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
 THREAD_ID = r"^[A-Za-z0-9-]{1,64}$"
+# the next.js rewrite proxy drops a response after 30 s without a byte, and a cold 14b model can be
+# silent longer than that before its first token, so an sse comment goes out after this much quiet
+KEEPALIVE_SECONDS = 10.0
 MESSAGES = {
     "ollama": "The local model isn't reachable. Is Ollama running?",
     "empty": "The model returned an empty answer. Try rephrasing.",
@@ -84,22 +87,20 @@ def _error_key(exc: Exception) -> str:
     return "ollama" if isinstance(exc, (httpx.ConnectError, ConnectionError)) else "other"
 
 
-async def _events(user: User, req: ChatRequest, lock: threading.Lock):
+# one turn as finished sse strings. blocking all the way through (db, checkpointer, model), so it
+# runs on its own worker thread (see _relay), never on the event loop
+def _turn_events(user: User, req: ChatRequest):
     session, stream, tools_seen, streamed = None, None, [], False
     try:
         session = session_factory()
         cfg = _config(user, req.thread_id)
-
-        def setup():
-            checkpointer = get_checkpointer()
-            state = build_chat_graph([], checkpointer=checkpointer).get_state(cfg).values
-            gateway, kb = PrivacyGateway(session, user.id, pseudonym=state.get("pseudonym")), make_kb()
-            graph = build_chat_graph(make_tools(gateway, kb), retrieve=kb.search, checkpointer=checkpointer)
-            turn = {"messages": [HumanMessage(req.message)], "tool_rounds": 0, "pseudonym": gateway.pseudonym}
-            return graph, graph.stream(turn, cfg, stream_mode=["messages", "updates"])
-
-        graph, stream = await run_in_threadpool(setup)
-        async for mode, payload in iterate_in_threadpool(stream):
+        checkpointer = get_checkpointer()
+        state = build_chat_graph([], checkpointer=checkpointer).get_state(cfg).values
+        gateway, kb = PrivacyGateway(session, user.id, pseudonym=state.get("pseudonym")), make_kb()
+        graph = build_chat_graph(make_tools(gateway, kb), retrieve=kb.search, checkpointer=checkpointer)
+        turn = {"messages": [HumanMessage(req.message)], "tool_rounds": 0, "pseudonym": gateway.pseudonym}
+        stream = graph.stream(turn, cfg, stream_mode=["messages", "updates"])
+        for mode, payload in stream:
             if mode == "messages":
                 chunk, meta = payload
                 if meta.get("langgraph_node") == "agent" and isinstance(chunk.content, str) and chunk.content:
@@ -117,7 +118,7 @@ async def _events(user: User, req: ChatRequest, lock: threading.Lock):
                     yield format_event("tool_result", {"id": m.tool_call_id, "name": m.name,
                                                        "ok": not str(m.content).startswith("error:")})
         if not streamed:
-            last = (await run_in_threadpool(graph.get_state, cfg)).values["messages"][-1]
+            last = graph.get_state(cfg).values["messages"][-1]
             # a model that doesn't stream still answers; one with nothing to say gets told so
             if isinstance(last, AIMessage) and isinstance(last.content, str) and last.content:
                 yield format_event("token", {"text": last.content})
@@ -129,12 +130,54 @@ async def _events(user: User, req: ChatRequest, lock: threading.Lock):
         logger.warning("chat turn failed", exc_info=True)   # full detail stays in local logs
         yield format_event("error", {"message": MESSAGES[_error_key(exc)]})
     finally:
-        if stream is not None:
-            stream.close()
-        if session is not None:
-            session.close()
-        lock.release()
-        logger.info("chat turn ended: tools=%s", tools_seen)   # names only, never message text
+        try:
+            if stream is not None:
+                stream.close()   # waits for an in-flight model call, which is why this is off the loop
+        finally:
+            if session is not None:
+                session.close()
+            logger.info("chat turn ended: tools=%s", tools_seen)   # names only, never message text
+
+
+# the response body: relays _turn_events from a worker thread, with keep-alives while it's quiet.
+# when the browser leaves, the worker is told to stop; it finishes the model call it's in, cleans
+# up and frees the user's lock on its own thread, so nothing here ever blocks the event loop
+async def _relay(user: User, req: ChatRequest, lock: threading.Lock):
+    loop, queue, stop = asyncio.get_running_loop(), asyncio.Queue(), threading.Event()
+
+    def post(item):
+        try:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+        except RuntimeError:   # the event loop is gone; nobody is listening
+            stop.set()
+
+    def work():
+        events = _turn_events(user, req)
+        try:
+            for item in events:
+                if stop.is_set():
+                    break
+                post(item)
+        finally:
+            try:
+                events.close()
+            finally:
+                lock.release()
+                post(None)   # end of turn
+
+    threading.Thread(target=work, name="chat-turn", daemon=True).start()
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), KEEPALIVE_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"   # an sse comment: clients ignore it, proxies see bytes
+                continue
+            if item is None:
+                return
+            yield item
+    finally:
+        stop.set()
 
 
 @router.post("/chat")
@@ -142,8 +185,8 @@ def post_chat(req: ChatRequest, user: User = Depends(get_current_user)):
     lock = _user_lock(user.id)
     if not lock.acquire(blocking=False):
         return JSONResponse({"detail": "A reply is already in progress."}, status_code=409)
-    # an async body, so starlette's close on disconnect reaches the finally that frees the lock
-    return StreamingResponse(_events(user, req, lock), media_type="text/event-stream",
+    # an async body, so starlette's close on disconnect reaches _relay's finally and stops the turn
+    return StreamingResponse(_relay(user, req, lock), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
 

@@ -30,6 +30,8 @@ SOURCE = {"title": FakeKB.RESULT["title"], "section": FakeKB.RESULT["section"], 
 def read_events(body: str) -> list:
     events = []
     for block in body.strip().split("\n\n"):
+        if block.startswith(":"):   # sse comment (keep-alive)
+            continue
         lines = dict(line.split(": ", 1) for line in block.split("\n") if ": " in line)
         events.append((lines["event"], json.loads(lines["data"])))
     return events
@@ -255,6 +257,13 @@ def test_lock_released_after_error(api, model):
     assert ask(api).status_code == 200
 
 
+def wait_unlocked(user_id="u-1", seconds=3):
+    deadline = time.time() + seconds
+    while chat._locks[user_id].locked() and time.time() < deadline:
+        time.sleep(0.01)
+    return not chat._locks[user_id].locked()
+
+
 # starlette closes the body iterator when the browser goes away; the lock must not leak
 def test_lock_released_when_client_disconnects(api, model, users):
     model.replies += [AIMessage("one two three four"), AIMessage("later")]
@@ -266,8 +275,54 @@ def test_lock_released_when_client_disconnects(api, model, users):
         return first
 
     assert "event: sources" in asyncio.run(read_one_then_leave())
-    assert not chat._locks["u-1"].locked()
+    assert wait_unlocked()
     assert ask(api).status_code == 200
+
+
+# leaving mid-answer must not stall the server: the model call finishes off the event loop
+def test_disconnect_does_not_block_event_loop(api, model, users):
+    model.token_delay = 0.3
+    model.replies += [AIMessage("one two three four five six"), AIMessage("later")]
+    resp = chat.post_chat(chat.ChatRequest(thread_id="t1", message=QUESTION), users["u-1"])
+
+    async def leave_mid_answer():
+        await resp.body_iterator.__anext__()          # sources
+        await resp.body_iterator.__anext__()          # first token; the model is still writing
+        gaps, last = [], time.monotonic()
+
+        async def ticker():
+            nonlocal last
+            while True:
+                await asyncio.sleep(0.02)
+                gaps.append(time.monotonic() - last)
+                last = time.monotonic()
+
+        tick = asyncio.create_task(ticker())
+        await asyncio.sleep(0.05)
+        started = time.monotonic()
+        await resp.body_iterator.aclose()
+        closed_in = time.monotonic() - started
+        await asyncio.sleep(0.1)
+        tick.cancel()
+        return closed_in, max(gaps)
+
+    closed_in, worst_gap = asyncio.run(leave_mid_answer())
+
+    assert closed_in < 0.5 and worst_gap < 0.5, (closed_in, worst_gap)
+    assert wait_unlocked()
+
+
+# the next.js proxy drops a response after 30 s with no bytes; a cold 14b model can be silent that long
+def test_keepalive_sent_while_model_silent(api, model, monkeypatch):
+    monkeypatch.setattr(chat, "KEEPALIVE_SECONDS", 0.05)
+    model.gate = threading.Event()
+    threading.Timer(0.4, model.gate.set).start()
+    model.replies.append(AIMessage(ANSWER))
+
+    body = ask(api).text
+
+    assert ": keep-alive\n\n" in body
+    assert types(read_events(body))[-1] == "done"
 
 
 def test_no_message_text_in_logs(api, model, caplog):

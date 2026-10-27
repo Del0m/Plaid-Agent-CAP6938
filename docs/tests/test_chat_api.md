@@ -129,9 +129,21 @@ Run them from `backend/`:
 
 ## `test_lock_released_when_client_disconnects`
 
-**What it does:** Calls the route directly, reads the first event (`sources`) from its body, then closes the body, which is what Starlette does when the browser goes away. It checks that the lock is free and the next POST succeeds.
+**What it does:** Calls the route directly, reads the first event (`sources`) from its body, then closes the body, which is what Starlette does when the browser goes away. It checks that the lock is freed within a few seconds and that the next POST succeeds.
 
-**Why it's there:** Closing a tab mid-answer is normal. The body is an async generator so that closing it runs the `finally` that frees the lock. Starlette doesn't close a plain sync generator on disconnect, so with one the lock would leak and chat would show "already in progress" until a restart.
+**Why it's there:** Closing a tab mid-answer is normal. Closing the body tells the turn's worker thread to stop; the worker cleans up and frees the lock on its own thread. If the lock leaked, chat would show "already in progress" until a restart.
+
+## `test_disconnect_does_not_block_event_loop`
+
+**What it does:** The fake model writes slowly (0.3 s per word). The test reads `sources` and the first token, then closes the body *while the model is still writing*. It checks that closing takes under 0.5 s, that a ticker task on the event loop never stalls for 0.5 s, and that the lock is freed afterwards.
+
+**Why it's there:** LangGraph's stream waits for the in-flight model call when it's closed. When that close ran on the event loop, a refresh mid-answer froze the whole backend (`/health`, the dashboard, history) until the model finished: 1.48 s in this test, tens of seconds with the real 14B model. Found in the final review. The turn now runs entirely on a worker thread.
+
+## `test_keepalive_sent_while_model_silent`
+
+**What it does:** With the keep-alive interval set to 0.05 s and the model held silent for 0.4 s, it checks that the body contains `: keep-alive` comments and still ends with `done`.
+
+**Why it's there:** The Next.js rewrite proxy drops a response after 30 s with no bytes. A cold `qwen2.5:14b` load, or a busy shared Ollama, can be silent that long before the first token, and the browser would see the answer cut off. A keep-alive goes out after 10 s of quiet; it's an SSE comment, so `parseSSE` ignores it. Found in the final review.
 
 ## `test_no_message_text_in_logs`
 

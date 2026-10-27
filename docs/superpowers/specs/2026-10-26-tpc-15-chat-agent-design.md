@@ -83,7 +83,7 @@ Putting the retrieved guidance into the system prompt, and keeping the data tool
 | `LLM_NUM_CTX` | `8192` | Context window passed to Ollama for the chat model |
 | `CHAT_CHECKPOINT_PATH` | `backend/data/checkpoints.db` (resolved from `app/`) | LangGraph SQLite checkpointer file |
 
-`requirements.txt` gains `langgraph` and `langgraph-checkpoint-sqlite`. Nothing new goes in `.gitignore`, because `*.db` is already ignored.
+`requirements.txt` gains `langgraph` and `langgraph-checkpoint-sqlite`. The root `.gitignore` gains `backend/data/`. (This originally said nothing was needed because `*.db` is ignored. That was wrong: `SqliteSaver` uses WAL mode, and the conversation data sits in `checkpoints.db-wal` and `-shm`, which `*.db` doesn't match. Found in the final review.)
 
 ## `app/agents/llm.py`
 
