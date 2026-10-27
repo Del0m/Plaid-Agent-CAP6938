@@ -1,6 +1,11 @@
 import os
+import sys
+from pathlib import Path
 
 from cryptography.fernet import Fernet
+
+# the eval harness (repo-root eval/) is tested from here; put the repo root on the path for it
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 # app.security fails at import without a key; a throwaway one is fine for tests.
 # setdefault uses a fake throwaway key
