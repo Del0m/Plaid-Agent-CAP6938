@@ -8,7 +8,7 @@ from langchain_core.embeddings import Embeddings
 
 from .. import config
 from ..agents.llm import get_embeddings
-from .chunk import Chunk
+from .chunk import Chunk, chunk_source
 
 # the knowledge base behind search_kb (architecture section 8). our code computes every vector,
 # so chroma only stores and searches them and never downloads its own default model
@@ -61,3 +61,13 @@ class KnowledgeBase:
         res = coll.query(query_embeddings=[self._embeddings.embed_query(f"{QUERY_PREFIX}{query}")], n_results=n)
         return [{"title": m["title"], "section": m["section"], "source_url": m["source_url"], "text": doc}
                 for doc, m in zip(res["documents"][0], res["metadatas"][0])]
+
+
+# committed sources first, then the git-ignored local ones; sorted so chunk order is repeatable
+def ingest(kb_dir: Path, kb: KnowledgeBase) -> tuple[int, int]:
+    sources = kb_dir / "sources"
+    paths = sorted(sources.glob("*.md")) + sorted((sources / "local").glob("*.md"))
+    if not paths:
+        raise FileNotFoundError(f"no sources in {sources}; run scripts/fetch_kb.py")
+    chunks = [c for p in paths for c in chunk_source(p)]
+    return kb.rebuild(chunks), len(paths)

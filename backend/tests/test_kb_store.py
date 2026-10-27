@@ -1,11 +1,13 @@
 import hashlib
 import math
 
+import httpx
 import pytest
 from langchain_core.embeddings import Embeddings
 
+from app import config
 from app.rag.chunk import Chunk
-from app.rag.store import DOC_PREFIX, QUERY_PREFIX, KnowledgeBase
+from app.rag.store import DOC_PREFIX, QUERY_PREFIX, KnowledgeBase, ingest
 
 
 # deterministic bag-of-words vectors: texts sharing words point the same way. records every
@@ -99,3 +101,44 @@ def test_persists_across_instances(tmp_path, kb):
     kb.rebuild(CHUNKS)
 
     assert KnowledgeBase(tmp_path / "chroma", embeddings=HashEmbeddings()).count() == 3
+
+
+def test_ingest_without_sources_raises(tmp_path, kb):
+    with pytest.raises(FileNotFoundError, match="run scripts/fetch_kb.py"):
+        ingest(tmp_path, kb)
+
+
+# ollama lists pulled models with a tag ("nomic-embed-text:latest"); the bare name means :latest
+def _ollama_has_embed_model() -> bool:
+    model = config.OLLAMA_EMBED_MODEL
+    try:
+        names = [m["name"] for m in httpx.get(f"{config.OLLAMA_BASE_URL}/api/tags", timeout=2).json()["models"]]
+    except Exception:
+        return False
+    return model in names or f"{model}:latest" in names
+
+
+live = pytest.mark.skipif(
+    not (_ollama_has_embed_model() and any((config.KB_DIR / "sources").glob("*.md"))),
+    reason="needs ollama with OLLAMA_EMBED_MODEL pulled and fetched kb/sources",
+)
+
+
+# the real corpus and the real embedding model, ingested once for every live case
+@pytest.fixture(scope="module")
+def real_kb(tmp_path_factory):
+    kb = KnowledgeBase(tmp_path_factory.mktemp("chroma"))
+    ingest(config.KB_DIR, kb)
+    return kb
+
+
+# the ticket's done-when, plus the M2 question it exists for
+@live
+@pytest.mark.parametrize("query, cites", [
+    ("Roth IRA vs 401k", lambda url: url.startswith("https://www.irs.gov/retirement-plans")),
+    ("which debt should I pay off first", lambda url: "how-reduce-your-debt" in url),
+], ids=["roth-vs-401k", "which-debt-first"])
+def test_live_kb_search(real_kb, query, cites):
+    urls = [r["source_url"] for r in real_kb.search(query)]
+
+    assert any(cites(u) for u in urls), urls

@@ -1,10 +1,12 @@
 import json
 import logging
+import re
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
 import httpx
+import lxml.html
 import trafilatura
 
 logger = logging.getLogger(__name__)
@@ -19,8 +21,43 @@ USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15
 MIN_WORDS = 150
 
 
+# lines cfpb ends every article with: a newsletter box, a last-modified stamp and link stubs
+_BOILERPLATE = re.compile(r"^(#+ Stay informed|Sign up for the latest financial tips.*|Page last modified\b.*|Read more)$")
+
+
 class FetchError(Exception):
     pass
+
+
+# inline markup joins with no gap ("<strong>dollars</strong>."); blocks and list items keep apart
+def _text(el) -> str:
+    for child in el.iter("p", "div", "br", "li"):
+        child.tail = (", " if child.tag == "li" else " ") + (child.tail or "")
+    return " ".join("".join(el.itertext()).split()).replace(" ,", ",").rstrip(", ")
+
+
+# trafilatura's markdown tables lose headers with inline markup and lists inside cells (the irs
+# roth chart loses its income limits), so each row becomes one line that names its row and columns
+def _flatten_tables(html: str) -> str:
+    doc = lxml.html.fromstring(html)
+    for table in doc.xpath("//table"):
+        rows = [[_text(c) for c in tr.xpath("./th|./td")] for tr in table.xpath(".//tr")]
+        rows = [r for r in rows if any(r)]
+        if not rows:
+            continue
+        has_header = bool(table.xpath(".//thead") or table.xpath(".//tr[1]/th"))
+        headers, body = (rows[0], rows[1:]) if has_header else ([], rows)
+        div = lxml.html.Element("div")
+        caption = table.xpath("./caption")
+        if caption:
+            lxml.html.etree.SubElement(div, "h2").text = _text(caption[0])
+        for cells in body:
+            labeled = [f"{h}: {c}" if h else c for h, c in zip(headers[1:], cells[1:]) if c] if headers \
+                else cells[1:]
+            line = f"{cells[0]} — {'; '.join(labeled)}" if labeled else cells[0]
+            lxml.html.etree.SubElement(div, "p").text = line
+        table.getparent().replace(table, div)
+    return lxml.html.tostring(doc, encoding="unicode")
 
 
 # public-domain pages are committed; copyrighted ones stay in the git-ignored local/ folder
@@ -35,8 +72,9 @@ def fetch_source(entry: dict, client: httpx.Client, today: date) -> str:
     resp = client.get(entry["url"], headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=30)
     if resp.status_code != 200:
         raise FetchError(f"HTTP {resp.status_code}")
-    body = trafilatura.extract(resp.text, output_format="markdown", include_tables=True, include_links=False)
-    words = len(body.split()) if body else 0
+    body = trafilatura.extract(_flatten_tables(resp.text), output_format="markdown", include_links=False)
+    body = "\n".join(line for line in (body or "").split("\n") if not _BOILERPLATE.match(line.strip()))
+    words = len(body.split())
     if words < MIN_WORDS:
         raise FetchError(f"only {words} words extracted")
 

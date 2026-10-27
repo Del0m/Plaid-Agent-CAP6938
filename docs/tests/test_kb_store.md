@@ -13,7 +13,8 @@ Run them from `backend/`:
 - `HashEmbeddings` stands in for Ollama. It turns a text into a normalized 64-dimension bag-of-words vector, so texts that share words point the same way and search ranking is predictable. It also records every string it embeds, which lets tests check the prefixes.
 - `chunk(slug, text)` builds a `Chunk` with a title, section and URL derived from the slug.
 - `CHUNKS` holds three chunks on clearly different topics: a Roth IRA, a credit card APR and an emergency fund.
-- `kb` is a `KnowledgeBase` stored under `tmp_path`, using `HashEmbeddings`. These tests never touch the real `kb/chroma/` or Ollama.
+- `kb` is a `KnowledgeBase` stored under `tmp_path`, using `HashEmbeddings`. Apart from the live test, these tests never touch the real `kb/chroma/` or Ollama.
+- `real_kb` (module-scoped, live test only) ingests the real `kb/sources/` with real `nomic-embed-text` into a temp Chroma directory. It runs once for both live cases.
 
 ---
 
@@ -52,3 +53,19 @@ Run them from `backend/`:
 **What it does:** Rebuilds, then opens a second `KnowledgeBase` on the same directory and checks it sees the same 3 chunks.
 
 **Why it's there:** Ingest runs as a script and chat runs in the API process. The collection has to survive on disk between the two.
+
+## `test_ingest_without_sources_raises`
+
+**What it does:** Runs `ingest` on a directory with no sources and checks that it raises `FileNotFoundError` telling you to run `scripts/fetch_kb.py`.
+
+**Why it's there:** Ingesting nothing would quietly build an empty collection. `search_kb` would then answer "knowledge base is empty" with no hint of why. Failing at ingest time points straight at the missing step.
+
+## `test_live_kb_search`
+
+**What it does:** The ticket's done-when, run against the real corpus and the real embedding model. It checks two cases:
+- "Roth IRA vs 401k" has an `irs.gov/retirement-plans` page in its top 4;
+- "which debt should I pay off first" has the CFPB "How to reduce your debt" page in its top 4.
+
+It's skipped unless Ollama lists `OLLAMA_EMBED_MODEL` (with or without `:latest`) and `kb/sources/` has files.
+
+**Why it's there:** The offline tests prove the mechanics with a fake embedder. Only this test shows that real retrieval finds the right guidance for the M2 questions. The skip check accepts `:latest` because Ollama lists the model as `nomic-embed-text:latest`; matching only the bare name would skip this test on every machine without anyone noticing. On 2026-10-26 both cases ranked the expected source first (96 chunks from 16 sources).

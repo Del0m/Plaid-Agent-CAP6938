@@ -12,7 +12,8 @@ Run them from `backend/`:
 
 ## Shared setup
 
-- `page(title, paragraphs)` builds a page shaped like a government one: a `<nav>` menu (including `Contact Menu`) and a footer around one `<article>`. The article has headings, about 360 words of paragraphs and a two-row table (`Roth IRA | $7,000`).
+- `TABLE` is shaped like the IRS Roth comparison chart. It has a caption, a header cell with inline `<strong>&nbsp;</strong>` markup, `<p>` inside cells, and a cell holding a list of income limits.
+- `page(title, paragraphs, extra)` builds a page shaped like a government one: a `<nav>` menu (including `Contact Menu`) and a footer around one `<article>`. The article has headings, about 360 words of paragraphs, `TABLE`, and any `extra` HTML.
 - `entry(slug, url, **extra)` is one `sources.json` entry (topic `saving`, license `public-domain` unless overridden). `make_kb` writes the entries to a temp `sources.json`.
 - `client(routes, seen)` is the mock HTTP client. `seen` collects every request so tests can check headers and whether anything was fetched at all.
 - `TODAY` is 2026-10-26.
@@ -25,11 +26,17 @@ Run them from `backend/`:
 
 **Why it's there:** These four values are what make every chunk citable. Menu and footer text in the body would be embedded as if it were guidance, and could come back as a search result.
 
-## `test_table_survives`
+## `test_table_rows_become_labeled_lines`
 
-**What it does:** Checks that the page's table comes through as markdown table rows (`| Roth IRA | $7,000 |`).
+**What it does:** Checks that each table row becomes one line naming its row and every column, for example `Contributions — Roth 401(k): …; Roth IRA: …`. It also checks that the list inside a cell survives (`Income limits: 2024 – single $161,000, 2023 – single $153,000`) and that the caption is kept as a heading.
 
-**Why it's there:** Several IRS sources are mostly tables, the Roth comparison chart above all. If tables were dropped, the knowledge base would lose the numbers people actually ask about.
+**Why it's there:** Trafilatura's own markdown tables mangled the real IRS chart. They dropped the "Designated Roth 401(k)" header, split cells across lines, and lost the Roth IRA income limits entirely. A line that carries its own labels reads correctly even when a chunk holds only part of the table, which matters for a "Roth IRA vs 401k" question.
+
+## `test_drops_site_boilerplate_lines`
+
+**What it does:** Adds CFPB's end-of-article lines (`Read more`, `Stay informed`, the newsletter sign-up, `Page last modified @`). It checks they're all removed while the article text stays.
+
+**Why it's there:** Every CFPB page in the corpus ends with these lines. If they stayed, they'd be embedded as guidance, and the newsletter line would sit inside chunks of real content.
 
 ## `test_title_override_and_fallback`
 

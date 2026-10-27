@@ -13,14 +13,22 @@ SENTENCE = ("Saving a little from every paycheck lets compound interest work for
             "and an emergency fund keeps a surprise bill from turning into credit card debt. ")
 
 
+# shaped like the irs roth comparison chart: inline markup in a header, <p> and a list inside cells
+TABLE = """<table><caption><h2>Retirement accounts</h2></caption>
+<thead><tr><th><p>Issue</p></th><th><p><strong>&nbsp;</strong>Roth 401(k)&nbsp;</p></th><th><p>&nbsp;Roth IRA</p></th></tr></thead>
+<tbody><tr><td><p>Contributions</p></td><td>Made with <strong>after-tax dollars</strong>.</td><td>Also after-tax.</td></tr>
+<tr><td><p>Income limits</p></td><td>No income limitation.</td>
+<td><p>Income limits:&nbsp;</p><ul><li>2024 – single $161,000</li><li><p>2023 – single $153,000</p></li></ul></td></tr>
+</tbody></table>"""
+
+
 # a gov-style page: nav and footer around one article with headings, paragraphs and a table
-def page(title="Saving Basics", paragraphs=6):
+def page(title="Saving Basics", paragraphs=6, extra=""):
     body = "".join(f"<p>{SENTENCE * 2}</p>" for _ in range(paragraphs))
     return f"""<html><head><title>{title}</title></head><body>
 <nav><ul><li><a href="/">Home</a></li><li><a href="/about">About</a></li><li><a href="/contact">Contact Menu</a></li></ul></nav>
 <main><article><h1>{title}</h1><h2>Why it matters</h2>{body}
-<table><thead><tr><th>Plan</th><th>Limit</th></tr></thead>
-<tbody><tr><td>Roth IRA</td><td>$7,000</td></tr><tr><td>401(k)</td><td>$23,000</td></tr></tbody></table>
+{TABLE}{extra}
 </article></main><footer>Footer links and copyright</footer></body></html>"""
 
 
@@ -59,14 +67,32 @@ def test_writes_front_matter_and_article(tmp_path):
     assert "Footer links" not in body
 
 
-def test_table_survives(tmp_path):
+# trafilatura's markdown tables drop such headers and lists, so each row becomes one labeled line
+def test_table_rows_become_labeled_lines(tmp_path):
     kb = make_kb(tmp_path, entry())
 
     fetch_all(kb, client({URL: html(page())}), today=TODAY)
 
-    _, body = parse_source(kb / "sources" / "good.md")
-    rows = [line for line in body.splitlines() if line.startswith("|")]
-    assert any("Roth IRA" in r and "$7,000" in r for r in rows)
+    lines = parse_source(kb / "sources" / "good.md")[1].splitlines()
+    assert "Retirement accounts" in " ".join(lines)
+    assert "Contributions — Roth 401(k): Made with after-tax dollars.; Roth IRA: Also after-tax." in lines
+    assert ("Income limits — Roth 401(k): No income limitation.; "
+            "Roth IRA: Income limits: 2024 – single $161,000, 2023 – single $153,000") in lines
+
+
+# cfpb pages end every article with these; they'd be embedded as if they were guidance
+def test_drops_site_boilerplate_lines(tmp_path):
+    extra = ("<p>Read more</p><h2>Stay informed</h2>"
+             "<p>Sign up for the latest financial tips and information right to your inbox.</p>"
+             "<p>Page last modified @</p>")
+    kb = make_kb(tmp_path, entry())
+
+    fetch_all(kb, client({URL: html(page(extra=extra))}), today=TODAY)
+
+    body = parse_source(kb / "sources" / "good.md")[1]
+    assert "compound interest" in body
+    for junk in ("Read more", "Stay informed", "Sign up for the latest", "Page last modified"):
+        assert junk not in body
 
 
 def test_title_override_and_fallback(tmp_path):
