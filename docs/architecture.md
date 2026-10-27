@@ -56,7 +56,7 @@ java -jar plantuml.jar -tsvg docs/diagrams/*.puml
 | Frontend | **Next.js (React, TypeScript)** + Tailwind + Recharts | Plaid ships `react-plaid-link`; Recharts covers balance and budget-pace charts | Vite + React, SvelteKit |
 | Backend API | **FastAPI (Python 3.12)** (decided) | LangGraph, ChromaDB and the Plaid Python SDK are all Python, so one language for backend and agents | Node/Express (then agents become a separate service) |
 | Agents | **LangGraph** | Explicit state graphs, checkpointing, `interrupt()` for human approval | Plain tool-use loop, CrewAI |
-| LLM | **Local Llama via Ollama** (`langchain-ollama` `ChatOllama`), behind a single `llm.py` wrapper. Agent model: **`llama3.1:8b`** (`mistral` as a benchmark comparison). Judge model for evals: **`qwen2.5:14b`**. Runs on a MacBook Pro M5, 24 GB (70B models don't fit) | Financial data never leaves your machine; free to run thousands of eval calls; wrapper still lets you swap models for benchmarking | A hosted API (Claude, OpenAI) as a comparison baseline |
+| LLM | **Local Llama via Ollama** (`langchain-ollama` `ChatOllama`), behind a single `llm.py` wrapper. Chat agent model: **`qwen2.5:14b`** (since 2026-10-26; `llama3.1:8b` and `mistral` as benchmark comparisons). Judge model for evals: a different model from the agent, chosen in TPC-16. Runs on a MacBook Pro M5, 24 GB (70B models don't fit) | Financial data never leaves your machine; free to run thousands of eval calls; wrapper still lets you swap models for benchmarking | A hosted API (Claude, OpenAI) as a comparison baseline |
 | Embeddings | **`nomic-embed-text` via Ollama** (decided 2026-10-26), behind `get_embeddings()` in `llm.py` | 8192-token context fits ~500-token chunks; runs on the Ollama server the agent already uses; nothing leaves your machine; same model can score semantic similarity in evals | `all-MiniLM-L6-v2` (Chroma's default, but truncates at 256 word-pieces), `bge-small-en-v1.5` |
 | Vector store | **ChromaDB** (persistent client, local dir) | Required by the proposal; zero ops | pgvector |
 | App DB | **SQLite** in dev, **PostgreSQL** later, via **SQLAlchemy 2 + Alembic** | Start simple; migrations keep the schema honest | Supabase |
@@ -75,7 +75,7 @@ Refer to `system-design.png` while reading.
 ### 4.1 Frontend
 - **Dashboard:** net worth, account balances, debts sorted by APR, and a "budget pace" bar per category (green under 100%, amber 100-110%, red above).
 - **Plaid Link widget:** `react-plaid-link`. Gets a `link_token` from the backend, returns a `public_token`. Bank credentials go to Plaid only.
-- **Chat UI:** streams tokens over a WebSocket (or Server-Sent Events). Shows which tools the agent called, which is great for debugging and for your demo.
+- **Chat UI** (`/chat`): streams tokens over Server-Sent Events from `POST /api/chat`. Shows which tools the agent called (✓/✗ chips) and lists the guidance it was given as clickable sources.
 - **Goals & Alerts:** list of agent alerts with Accept / Dismiss buttons; accepted suggestions feed back into the agent's memory.
 
 ### 4.2 Backend API (FastAPI)
@@ -91,7 +91,7 @@ Four graphs, sharing one tool set:
 
 | Graph | Trigger | Shape |
 |---|---|---|
-| **Chat Agent** | User message | ReAct loop: LLM ↔ tools until it answers |
+| **Chat Agent** | User message | Retrieve guidance for the question, then a ReAct loop: LLM ↔ tools until it answers (at most 6 tool rounds, then one last call without tools) |
 | **Budget Agent** | Daily schedule | Fixed pipeline with one LLM branch (diagnose + decide). See `budget-agent-loop.png` |
 | **Period-Close Agent** | Period end | Compare budget vs actual, apply adjustments, open next period |
 | **Goal Agent** | User request or after period close | Gather debts/income/surplus → propose goals → user approves via `interrupt()` |
@@ -242,7 +242,7 @@ Because the LLM runs locally (Ollama), prompts never leave your machine, which r
 
 **Ingestion** (`scripts/ingest_kb.py`, code in `app/rag/`): split at markdown headings, then pack paragraphs into ~500-token chunks (375 words) with ~50-token overlap (38 words), never crossing a section. Embed each chunk as `search_document: <title> - <section>\n\n<text>`, the task prefix nomic-embed-text expects, and rebuild the Chroma collection `fin_guidance` (cosine) from scratch each run, with metadata `{source_url, title, section, topic, fetched_at, chunk_index}`. Our code computes every vector; Chroma never runs its own embedding model.
 
-**Retrieval** (`search_kb` tool): embed the query as `search_query: <query>`, take the top 4, and return `{"purpose": "kb", "results": [{title, source_url, section, text}]}` with no similarity scores. The chat agent should cite the `source_url` in answers. `scripts/search_kb.py "<query>"` prints the same results for checking by hand.
+**Retrieval** (`search_kb` tool): embed the query as `search_query: <query>`, take the top 4, and return `{"purpose": "kb", "results": [{title, source_url, section, text}]}` with no similarity scores. The chat graph also runs this search itself on every question (the `retrieve` node) and puts the results in the system prompt as guidance; the app, not the model, lists their URLs as the answer's sources, because in live runs both local models skipped `search_kb` and invented citations. `scripts/search_kb.py "<query>"` prints the same results for checking by hand.
 
 Note on vocabulary: the proposal says "knowledge graph." What's described (LangGraph + ChromaDB, retrieve guidance) is a **vector-store RAG** plus an **agent graph**. That's fine; just use the precise terms in the report. A real knowledge graph (entities + relations) would be an optional extension.
 
@@ -261,7 +261,8 @@ GET  /budget/current            -> period + lines
 POST /budget/lines/{id}         (user override)
 GET  /alerts ; POST /alerts/{id}/accept | /dismiss
 GET  /goals ; POST /goals/generate ; POST /goals/{id}/accept
-WS   /chat                      streaming chat with the Chat Agent
+POST /chat                      { thread_id, message } -> text/event-stream: sources, tool_call, tool_result, token, done | error
+GET  /chat/{thread_id}          -> the conversation so far, grouped into turns (tools and sources per answer)
 POST /admin/run/{graph}?user_id (dev only: trigger an agent run manually)
 POST /admin/sandbox/advance     (dev only: inject sandbox transactions, see 12)
 ```
@@ -291,7 +292,7 @@ Build the harness **early** (alongside Milestone 2), even with only two scenario
 
 ### 10.3 Tips
 - Fix the LLM `temperature` (e.g. 0) during evals and run each scenario 3 times; report mean and spread.
-- Don't use the same model as both agent and judge if you can avoid it, or at least report that you did. The agent is `llama3.1:8b` and the judge is `qwen2.5:14b`, so a different model family grades the answers.
+- Don't use the same model as both agent and judge if you can avoid it, or at least report that you did. The chat agent is now `qwen2.5:14b`, the model first planned as judge, so TPC-16 must pick a different judge (e.g. `llama3.1:8b` or `mistral`) and report the choice.
 - Track latency too: a local model's speed per agent run is a real result worth reporting.
 - Save every run's outputs as JSON in `eval/results/<date>/` so you can chart progress in the final report.
 
@@ -392,7 +393,7 @@ Assignment due **November 9, 2026**; everything is scheduled to finish by **Nove
 1. `llm.py` wrapper around `ChatOllama`; first check that your Llama model returns tool calls correctly with one toy tool. Then Privacy Gateway v1 (allowlist + pseudonym).
 2. Tools: `get_accounts`, `get_debts`, `get_spending(category, from, to)`, `search_kb`.
 3. KB ingestion with 10-20 source docs.
-4. Chat graph (ReAct) + WebSocket streaming.
+4. Chat graph (retrieve + ReAct) + SSE streaming.
 5. Eval harness skeleton with 5 golden Q&A scenarios.
 - **Done when:** "Which debt should I pay first?" names the highest-APR card with the right numbers and cites a source.
 - **Learn:** tool calling (and its failure modes on small local models), RAG, prompt minimization, LLM-as-judge.
@@ -456,6 +457,12 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-26 | KB sources fetched by `scripts/fetch_kb.py` from `kb/sources.json` and committed as markdown, except copyrighted pages (git-ignored `kb/sources/local/`) | Reproducible and offline-testable; the committed text is exactly what gets cited; we don't redistribute pages we have no right to |
 | 2026-10-26 | Every ingest drops and rebuilds the `fin_guidance` collection | With ~16 documents it takes seconds, and it can't leave stale or duplicate chunks behind |
 | 2026-10-26 | `search_kb` does not go through the Privacy Gateway | Its results are public text with no user data, and the query only reaches the local embedding model |
+| 2026-10-26 | The venv is rebuilt on Python 3.12 (was 3.9 by accident) | Matches section 3; LangGraph 1.x needs 3.10+; removes the LibreSSL warning. The re-resolve moved langchain-core to 1.x and trafilatura to 2.3 with no code changes |
+| 2026-10-26 | Chat streams as SSE from `POST /chat` through the Next.js `/api` rewrite, not a WebSocket | Next rewrites don't forward WebSocket upgrades; a check showed 5 events 200 ms apart arrive 0.87 s apart through the proxy, so it doesn't buffer. The phone demo and same-origin decision still hold |
+| 2026-10-26 | Hand-built LangGraph chat graph (`retrieve → agent ⇄ tools`), cap of 6 tool rounds per question, then one call without tools | Tool errors go through `_run_tool`, so raw exception text never reaches the model (the prebuilt `ToolNode` forwards it); the cap still gives the user an answer |
+| 2026-10-26 | The app retrieves guidance for every question and lists the sources itself; the model is told never to write URLs. Chat model switched to `qwen2.5:14b` | Live done-when was 0/3 when the model had to call `search_kb`: neither `llama3.1:8b` nor `qwen2.5:14b` called it next to `get_debts`, and both invented citations (NerdWallet, made-up CFPB URLs). With app-side retrieval it's 3/3 on qwen. qwen was the planned judge, so TPC-16 needs another |
+| 2026-10-26 | One chat reply in flight per user: a second request gets `409` | Each turn holds the local model for seconds; a second tab or a refresh loop would stack runs. The lock is in-process, so the app runs one uvicorn worker |
+| 2026-10-26 | Frontend unit tests with Vitest + React Testing Library + jsdom (`npm test`), set up per Next 16's bundled guide | The chat page has real logic (stream parsing, event folding, storage fallback); a test runner caught a history race on day one |
 | | | |
 
 ---
