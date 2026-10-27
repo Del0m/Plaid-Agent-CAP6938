@@ -13,6 +13,39 @@ Ship the M2 demo. On a `/chat` page you ask a question, the answer streams in, a
 
 **Out of scope:** auth (still the one dev user); a UI for listing or switching conversations; the eval harness (TPC-16).
 
+## Amendment A1 (2026-10-26, after live probes): the app retrieves and cites
+
+This amendment **supersedes** the parts of this spec it contradicts: the `SYSTEM_PROMPT` text, the event list, the history shape, and the done-when test.
+
+**Why.** With the original design, the live done-when test failed 0/3:
+- `llama3.1:8b` called `get_debts` but never `search_kb`, then invented a source (NerdWallet, bankrate.com).
+- A stricter prompt didn't help. `qwen2.5:14b` also never called `search_kb`, and it invented CFPB URLs that aren't in the knowledge base.
+- Neither model makes two *kinds* of tool call in one turn.
+
+Putting the retrieved guidance into the system prompt, and keeping the data tools available, gave the right behavior with no invented URLs: the model called `get_debts`, named the 22% card, and credited the CFPB. Armin chose this design, with **`qwen2.5:14b` as the chat model**.
+
+**Changes**
+
+1. **Chat model.** The `OLLAMA_MODEL` default becomes `qwen2.5:14b`, in `config.py` and `.env.example`. It's also the TPC-16 judge, so TPC-16 needs a different judge model so the model isn't grading itself; that's noted in the decision log.
+2. **`retrieve` node.** The graph becomes `START → retrieve → agent ⇄ tools`. `build_chat_graph(tools, *, retrieve=None, model=None, checkpointer=None)`, where `retrieve: Callable[[str], list[dict]]` is `KnowledgeBase.search` in the API, or `None` for no guidance.
+   - The node searches on the latest user message (top 4) and stores the results in state.
+   - `ChatState` gains `sources: list[dict]` (this turn's results) and `sources_by_turn: dict[str, list[dict]]`. The second is keyed by the user message's id, merged with a dict-merge reducer, and used for history.
+   - If the knowledge base is empty, there's no guidance and no sources.
+3. **The guidance goes into the system prompt, never into stored messages.** It's appended as `\n\nGuidance retrieved for this question:\n- <title> / <section>: <text>` per result.
+4. **`SYSTEM_PROMPT` (exact text, replacing the one below):**
+
+   > You are a personal finance assistant for one user. For anything about the user's own accounts, debts or spending, call get_accounts, get_debts or get_spending and use only the numbers they return; never guess the user's numbers. For general rules and strategies, use the guidance below and refer to it by its title; never write URLs or name other websites, because the app lists the sources for you. If the guidance doesn't cover the question, call search_kb. When a figure applies to a specific year, say which year. Keep answers short and concrete. End with one line: "This is general information, not financial advice."
+
+5. **A new SSE event: `sources {sources: [{title, section, url}]}`.** It's sent once per turn, right after retrieval and before any token, and only when there are results. The UI lists them as clickable "Sources" under the answer.
+6. **Text written before a tool call is not the answer.** qwen sometimes writes text alongside a tool call (e.g. `CallCheck_debts()`). Tokens are still streamed as they arrive. When a `tool_call` event follows, the client discards the assistant text received so far in that turn. History uses the text of the turn's last AI message that has no tool calls.
+7. **History shape.** Each assistant turn gains `sources: [{title, section, url}]`, from `sources_by_turn` for the user message that started it.
+8. **Done-when test (replaces the one below).** On the seeded user, "Which debt should I pay first?" must give:
+   - an answer containing "credit card" and "22";
+   - a `sources` event including the CFPB `how-reduce-your-debt` URL;
+   - no `http` URL in the answer text that isn't among the sources. Fabrication fails the test.
+
+   It's skipped unless Ollama has `OLLAMA_MODEL` and `OLLAMA_EMBED_MODEL`, and the knowledge base is ingested. Run it 3 times and record the score.
+
 ## Decisions
 
 | Question | Decision |
