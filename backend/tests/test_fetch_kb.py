@@ -25,7 +25,8 @@ TABLE = """<table><caption><h2>Retirement accounts</h2></caption>
 
 # a gov-style page: nav and footer around one article with headings, paragraphs and a table
 def page(title="Saving Basics", paragraphs=6, extra=""):
-    body = "".join(f"<p>{SENTENCE * 2}</p>" for _ in range(paragraphs))
+    # numbered so every paragraph is distinct: trafilatura drops repeated identical paragraphs
+    body = "".join(f"<p>Paragraph {i}. {SENTENCE * 2}</p>" for i in range(paragraphs))
     return f"""<html><head><title>{title}</title></head><body>
 <nav><ul><li><a href="/">Home</a></li><li><a href="/about">About</a></li><li><a href="/contact">Contact Menu</a></li></ul></nav>
 <main><article><h1>{title}</h1><h2>Why it matters</h2>{body}
