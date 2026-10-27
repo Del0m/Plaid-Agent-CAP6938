@@ -1,0 +1,18 @@
+[
+  {"slug": "cfpb-credit-card-apr", "topic": "credit", "license": "public-domain", "url": "https://www.consumerfinance.gov/ask-cfpb/what-is-a-credit-card-interest-rate-what-does-apr-mean-en-44/"},
+  {"slug": "cfpb-credit-cards", "topic": "credit", "license": "public-domain", "url": "https://www.consumerfinance.gov/consumer-tools/credit-cards/"},
+  {"slug": "cfpb-credit-reports-scores", "topic": "credit", "license": "public-domain", "url": "https://www.consumerfinance.gov/consumer-tools/credit-reports-and-scores/"},
+  {"slug": "cfpb-reduce-debt", "topic": "debt", "license": "public-domain", "url": "https://www.consumerfinance.gov/about-us/blog/how-reduce-your-debt/"},
+  {"slug": "cfpb-student-loans", "topic": "debt", "license": "public-domain", "url": "https://www.consumerfinance.gov/consumer-tools/student-loans/"},
+  {"slug": "cfpb-emergency-fund", "topic": "saving", "license": "public-domain", "url": "https://www.consumerfinance.gov/an-essential-guide-to-building-an-emergency-fund/"},
+  {"slug": "fdic-deposit-insurance", "topic": "saving", "license": "public-domain", "url": "https://www.fdic.gov/resources/deposit-insurance/understanding-deposit-insurance"},
+  {"slug": "irs-roth-comparison-chart", "topic": "retirement", "license": "public-domain", "url": "https://www.irs.gov/retirement-plans/roth-comparison-chart"},
+  {"slug": "irs-roth-iras", "topic": "retirement", "license": "public-domain", "url": "https://www.irs.gov/retirement-plans/roth-iras"},
+  {"slug": "irs-traditional-and-roth-iras", "topic": "retirement", "license": "public-domain", "url": "https://www.irs.gov/retirement-plans/traditional-and-roth-iras"},
+  {"slug": "irs-ira-contribution-limits", "topic": "retirement", "license": "public-domain", "url": "https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-ira-contribution-limits"},
+  {"slug": "irs-401k-contribution-limits", "topic": "retirement", "license": "public-domain", "url": "https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-401k-and-profit-sharing-plan-contribution-limits"},
+  {"slug": "investor-risk-tolerance", "topic": "investing", "license": "public-domain", "url": "https://www.investor.gov/introduction-investing/getting-started/assessing-your-risk-tolerance"},
+  {"slug": "investor-asset-allocation", "topic": "investing", "license": "public-domain", "url": "https://www.investor.gov/introduction-investing/getting-started/asset-allocation"},
+  {"slug": "investor-compound-interest", "topic": "investing", "license": "public-domain", "url": "https://www.investor.gov/introduction-investing/investing-basics/glossary/compound-interest"},
+  {"slug": "unfcu-50-30-20", "topic": "budgeting", "license": "copyrighted", "url": "https://www.unfcu.org/guides/the-50-30-20-rule"}
+]

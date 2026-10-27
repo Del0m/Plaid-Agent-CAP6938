@@ -1,0 +1,74 @@
+# Tests: `backend/tests/test_fetch_kb.py`
+
+These tests cover `app/rag/fetch.py`, which downloads the pages listed in `kb/sources.json` and saves each one's article text as markdown with front matter (TPC-14). `scripts/fetch_kb.py` is a thin CLI over `fetch_all`.
+
+No test touches the network. An `httpx.MockTransport` serves saved HTML; any URL without a route gets a 404.
+
+Run them from `backend/`:
+
+```bash
+../venv/bin/python -m pytest tests/test_fetch_kb.py -v
+```
+
+## Shared setup
+
+- `page(title, paragraphs)` builds a page shaped like a government one: a `<nav>` menu (including `Contact Menu`) and a footer around one `<article>`. The article has headings, about 360 words of paragraphs and a two-row table (`Roth IRA | $7,000`).
+- `entry(slug, url, **extra)` is one `sources.json` entry (topic `saving`, license `public-domain` unless overridden). `make_kb` writes the entries to a temp `sources.json`.
+- `client(routes, seen)` is the mock HTTP client. `seen` collects every request so tests can check headers and whether anything was fetched at all.
+- `TODAY` is 2026-10-26.
+
+---
+
+## `test_writes_front_matter_and_article`
+
+**What it does:** Fetches one page and checks that the saved file has exactly the four front-matter values (title, the listed URL, topic, today's date). It also checks that the body has the article text and none of the nav or footer text.
+
+**Why it's there:** These four values are what make every chunk citable. Menu and footer text in the body would be embedded as if it were guidance, and could come back as a search result.
+
+## `test_table_survives`
+
+**What it does:** Checks that the page's table comes through as markdown table rows (`| Roth IRA | $7,000 |`).
+
+**Why it's there:** Several IRS sources are mostly tables, the Roth comparison chart above all. If tables were dropped, the knowledge base would lose the numbers people actually ask about.
+
+## `test_title_override_and_fallback`
+
+**What it does:** Checks that an entry's `title` in `sources.json` wins over the page's own title, and that the page's title is used when there's no override.
+
+**Why it's there:** Some pages have titles that are useless as citations (site names, "Home"). The override fixes those without editing the fetched file by hand.
+
+## `test_title_with_colon_and_unicode_round_trips`
+
+**What it does:** Fetches a page titled `Retirement topics: IRA “limits”` and checks that `parse_source` reads exactly that title back.
+
+**Why it's there:** The front matter is written by `fetch.py` and read by `chunk.py`. A colon or curly quote in a title must survive both, or the citation is wrong.
+
+## `test_follows_redirect`
+
+**What it does:** Serves a 301 from the listed URL to the same URL with a trailing slash. It checks that the page is still saved and that `source_url` is the listed URL, not the redirect target.
+
+**Why it's there:** Government sites redirect often. Without following redirects, a moved page would be a failure. The URL we cite should be the one we chose to list.
+
+## `test_failures_reported_others_written`
+
+**What it does:** Runs three entries: one 404, one page with too few words, and one good page. It checks that the two bad slugs are returned in order and that only the good file is written.
+
+**Why it's there:** One moved or blocked page must not stop the rest. A page under 150 words is almost always a block page or one that only renders in JavaScript, and should never be saved as guidance.
+
+## `test_skips_existing_unless_refresh`
+
+**What it does:** Checks that an existing file is left alone with no request made, and that it's fetched again and rewritten with `refresh=True`.
+
+**Why it's there:** The committed files are the exact text we cite, so a plain run must not quietly change them. `--refresh` is the deliberate way to update them, for example when IRS limits change.
+
+## `test_copyrighted_goes_to_local`
+
+**What it does:** Checks that an entry with `"license": "copyrighted"` is written to `sources/local/` and not to `sources/`.
+
+**Why it's there:** `sources/local/` is git-ignored, so pages we can't redistribute are never committed to the repo.
+
+## `test_sends_user_agent`
+
+**What it does:** Checks that the request carries the browser `User-Agent`.
+
+**Why it's there:** Some government sites reject clients that don't look like a browser. Without the header, fetching would fail on the real sites even though every other test passes.
