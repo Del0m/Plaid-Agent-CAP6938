@@ -39,19 +39,41 @@ def seeded(db):
     return db
 
 
+# stands in for KnowledgeBase: returns one canned result and records each search
+class FakeKB:
+    RESULT = {"title": "How to reduce your debt", "section": "Paying down debt",
+              "source_url": "https://www.consumerfinance.gov/about-us/blog/how-reduce-your-debt/",
+              "text": "Pay the highest interest debt first."}
+
+    def __init__(self, chunks=1):
+        self.chunks, self.searches = chunks, []
+
+    def count(self):
+        return self.chunks
+
+    def search(self, query, k=4):
+        self.searches.append((query, k))
+        return [self.RESULT]
+
+
+@pytest.fixture
+def kb():
+    return FakeKB()
+
+
 # tools built for user u-1, as the chat session would build them
 @pytest.fixture
-def tools(seeded, tmp_path):
+def tools(seeded, tmp_path, kb):
     with seeded() as s:
-        yield {t.name: t for t in make_tools(PrivacyGateway(s, "u-1", audit_path=tmp_path / "audit.jsonl"))}
+        yield {t.name: t for t in make_tools(PrivacyGateway(s, "u-1", audit_path=tmp_path / "audit.jsonl"), kb)}
 
 
 def data(out: str):
     return json.loads(out)["data"]
 
 
-def test_three_tools_with_descriptions(tools):
-    assert set(tools) == {"get_accounts", "get_debts", "get_spending"}
+def test_four_tools_with_descriptions(tools):
+    assert set(tools) == {"get_accounts", "get_debts", "get_spending", "search_kb"}
     assert all(t.description for t in tools.values())
 
 
@@ -61,6 +83,7 @@ def test_no_tool_accepts_a_user(tools):
         assert not any("user" in arg for arg in t.args)
     assert set(tools["get_spending"].args) == {"category", "start_date", "end_date"}
     assert tools["get_accounts"].args == {} and tools["get_debts"].args == {}
+    assert set(tools["search_kb"].args) == {"query"}
 
 
 def test_get_accounts(tools):
@@ -129,6 +152,36 @@ def test_every_call_is_audited(tools, tmp_path):
     assert [l["purpose"] for l in lines] == ["accounts", "debts", "spending"]
 
 
+def test_search_kb_output_shape(tools, kb):
+    out = tools["search_kb"].invoke({"query": "which debt should I pay first"})
+
+    assert json.loads(out) == {"purpose": "kb", "results": [FakeKB.RESULT]}
+    assert kb.searches == [("which debt should I pay first", 4)]
+
+
+@pytest.mark.parametrize("query", ["", "   "])
+def test_search_kb_rejects_empty_query(tools, query):
+    with pytest.raises(ToolException, match="query must not be empty"):
+        tools["search_kb"].invoke({"query": query})
+
+
+# a model that pastes the whole conversation in as the query still gets a search
+def test_search_kb_trims_long_query(tools, kb):
+    tools["search_kb"].invoke({"query": "x" * 5000})
+
+    assert len(kb.searches[0][0]) == 1000
+
+
+def test_search_kb_empty_kb(seeded, tmp_path):
+    kb = FakeKB(chunks=0)
+    with seeded() as s:
+        search = {t.name: t for t in make_tools(PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl"), kb)}
+
+        with pytest.raises(ToolException, match="knowledge base is empty"):
+            search["search_kb"].invoke({"query": "roth ira"})
+    assert kb.searches == []
+
+
 def _ollama_has_model() -> bool:
     try:
         resp = httpx.get(f"{config.OLLAMA_BASE_URL}/api/tags", timeout=2)
@@ -142,7 +195,7 @@ def _ollama_has_model() -> bool:
 def test_live_model_picks_get_debts(seeded, tmp_path):
     audit = tmp_path / "audit.jsonl"
     with seeded() as s:
-        tools = make_tools(PrivacyGateway(s, "u-1", audit_path=audit))
+        tools = make_tools(PrivacyGateway(s, "u-1", audit_path=audit), FakeKB())
         answer = call_with_tools([HumanMessage("Which of my debts has the highest APR?")], tools)
 
     purposes = [json.loads(l)["purpose"] for l in audit.read_text().splitlines()]

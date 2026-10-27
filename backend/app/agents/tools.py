@@ -1,9 +1,14 @@
+import json
+import logging
 from datetime import date
 from typing import Optional
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
 from ..privacy.gateway import PrivacyGateway
+from ..rag.store import KnowledgeBase
 
-# the chat agent's data tools (architecture section 9, M2). every one reads through the privacy
+logger = logging.getLogger(__name__)
+
+# the chat agent's tools (architecture section 9, M2). every user-data tool reads through the privacy
 # gateway, so allowlists, scrubbing, the pseudonym and the audit log apply to all of them.
 # schemas are kept small and plain for an 8B model: few args, strings, descriptions that say when.
 
@@ -16,6 +21,9 @@ PFC_CATEGORIES = (
 # the gateway's label for transactions plaid left uncategorized
 VALID_CATEGORIES = PFC_CATEGORIES + ("UNCATEGORIZED",)
 
+SEARCH_K = 4
+MAX_QUERY_CHARS = 1000
+
 
 def _parse_date(name: str, value: Optional[str]) -> Optional[date]:
     if value is None:
@@ -27,7 +35,7 @@ def _parse_date(name: str, value: Optional[str]) -> Optional[date]:
 
 
 # tools are closures over one gateway, which already holds the user: the model never sees or picks a user id
-def make_tools(gateway: PrivacyGateway) -> list[BaseTool]:
+def make_tools(gateway: PrivacyGateway, kb: KnowledgeBase) -> list[BaseTool]:
     def get_accounts() -> str:
         return gateway.build_context("accounts")
 
@@ -47,6 +55,18 @@ def make_tools(gateway: PrivacyGateway) -> list[BaseTool]:
             category = category.strip().upper()
         return gateway.build_context("spending", start=start, end=end, category=category)
 
+    # skips the gateway: results are public guidance with no user data, and the query only
+    # goes to the local embedding model (architecture section 7)
+    def search_kb(query: str) -> str:
+        query = query.strip()[:MAX_QUERY_CHARS]
+        if not query:
+            raise ToolException("query must not be empty")
+        if kb.count() == 0:
+            logger.warning("knowledge base is empty; run scripts/ingest_kb.py")
+            raise ToolException("knowledge base is empty")
+        return json.dumps({"purpose": "kb", "results": kb.search(query, k=SEARCH_K)},
+                          separators=(",", ":"), ensure_ascii=False)
+
     return [
         StructuredTool.from_function(
             get_accounts, name="get_accounts",
@@ -63,5 +83,12 @@ def make_tools(gateway: PrivacyGateway) -> list[BaseTool]:
             description="Total spending in dollars by category. Optional: category (one of "
                         f"{', '.join(PFC_CATEGORIES)}) to also list that category's transactions; "
                         "start_date and end_date as YYYY-MM-DD (default: the last 30 days).",
+        ),
+        StructuredTool.from_function(
+            search_kb, name="search_kb",
+            description="Search trusted public financial guidance (CFPB, IRS, SEC investor.gov, FDIC) for general "
+                        "rules and strategies: retirement accounts, debt payoff methods, budgeting rules, savings "
+                        "and deposit insurance. Returns passages with source URLs; cite the source_url in your "
+                        "answer. Not for the user's own balances or spending.",
         ),
     ]
