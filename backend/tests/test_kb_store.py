@@ -103,6 +103,28 @@ def test_persists_across_instances(tmp_path, kb):
     assert KnowledgeBase(tmp_path / "chroma", embeddings=HashEmbeddings()).count() == 3
 
 
+# ollama dropping out mid-ingest must leave the last good knowledge base, not a partial one
+def test_failed_rebuild_keeps_previous_kb(tmp_path):
+    embeddings = HashEmbeddings()
+    kb = KnowledgeBase(tmp_path / "chroma", embeddings=embeddings)
+    kb.rebuild(CHUNKS)
+    calls = []
+
+    def flaky(texts):
+        calls.append(texts)
+        if len(calls) == 2:
+            raise ConnectionError("ollama went away")
+        return HashEmbeddings.embed_documents(embeddings, texts)
+
+    embeddings.embed_documents = flaky
+    many = [chunk(f"doc{i}", f"text number {i}") for i in range(40)]   # two batches of 32
+
+    with pytest.raises(ConnectionError):
+        kb.rebuild(many)
+    assert kb.count() == 3
+    assert kb.search("credit card apr")[0]["source_url"] == "https://example.gov/apr"
+
+
 def test_ingest_without_sources_raises(tmp_path, kb):
     with pytest.raises(FileNotFoundError, match="run scripts/fetch_kb.py"):
         ingest(tmp_path, kb)

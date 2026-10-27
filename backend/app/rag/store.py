@@ -30,8 +30,14 @@ class KnowledgeBase:
         return self._client.get_or_create_collection(
             COLLECTION, embedding_function=None, configuration={"hnsw": {"space": "cosine"}})
 
-    # drop and refill: with ~16 docs this takes seconds and can't leave stale or duplicate chunks
+    # drop and refill: with ~16 docs this takes seconds and can't leave stale or duplicate chunks.
+    # everything is embedded before the old collection is dropped, so a failure keeps the last good one
     def rebuild(self, chunks: list[Chunk]) -> int:
+        vectors = []
+        for start in range(0, len(chunks), BATCH):
+            # the heading helps a short chunk match; the stored document stays the plain text
+            vectors += self._embeddings.embed_documents(
+                [f"{DOC_PREFIX}{c.title} - {c.section}\n\n{c.text}" for c in chunks[start:start + BATCH]])
         try:
             self._client.delete_collection(COLLECTION)
         except NotFoundError:   # first ingest: nothing to drop
@@ -39,11 +45,9 @@ class KnowledgeBase:
         coll = self._collection()
         for start in range(0, len(chunks), BATCH):
             batch = chunks[start:start + BATCH]
-            # the heading helps a short chunk match; the stored document stays the plain text
-            vectors = self._embeddings.embed_documents(
-                [f"{DOC_PREFIX}{c.title} - {c.section}\n\n{c.text}" for c in batch])
             coll.add(
-                ids=[c.id for c in batch], documents=[c.text for c in batch], embeddings=vectors,
+                ids=[c.id for c in batch], documents=[c.text for c in batch],
+                embeddings=vectors[start:start + BATCH],
                 metadatas=[{"title": c.title, "section": c.section, "source_url": c.source_url,
                             "topic": c.topic, "fetched_at": c.fetched_at, "chunk_index": start + i}
                            for i, c in enumerate(batch)],

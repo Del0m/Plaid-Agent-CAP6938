@@ -54,6 +54,12 @@ Run them from `backend/`:
 
 **Why it's there:** Ingest runs as a script and chat runs in the API process. The collection has to survive on disk between the two.
 
+## `test_failed_rebuild_keeps_previous_kb`
+
+**What it does:** Builds a 3-chunk knowledge base, then rebuilds with 40 chunks using an embedder that fails on its second batch. It checks that the rebuild raises and that the original 3 chunks are still there and searchable.
+
+**Why it's there:** `rebuild` used to drop the collection before embedding anything. If Ollama went away halfway through an ingest, chat would quietly answer from a partial knowledge base, for example only the first 32 CFPB chunks and never irs.gov. Now every vector is computed before the old collection is dropped.
+
 ## `test_ingest_without_sources_raises`
 
 **What it does:** Runs `ingest` on a directory with no sources and checks that it raises `FileNotFoundError` telling you to run `scripts/fetch_kb.py`.

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
+import lxml.etree
 import lxml.html
 import trafilatura
 
@@ -23,6 +24,8 @@ MIN_WORDS = 150
 
 # lines cfpb ends every article with: a newsletter box, a last-modified stamp and link stubs
 _BOILERPLATE = re.compile(r"^(#+ Stay informed|Sign up for the latest financial tips.*|Page last modified\b.*|Read more)$")
+# lxml refuses a str that still carries an encoding declaration (xhtml pages)
+_XML_DECL = re.compile(r"^\s*<\?xml[^>]*\?>")
 
 
 class FetchError(Exception):
@@ -39,14 +42,22 @@ def _text(el) -> str:
 # trafilatura's markdown tables lose headers with inline markup and lists inside cells (the irs
 # roth chart loses its income limits), so each row becomes one line that names its row and columns
 def _flatten_tables(html: str) -> str:
-    doc = lxml.html.fromstring(html)
+    doc = lxml.html.fromstring(_XML_DECL.sub("", html))
     for table in doc.xpath("//table"):
-        rows = [[_text(c) for c in tr.xpath("./th|./td")] for tr in table.xpath(".//tr")]
-        rows = [r for r in rows if any(r)]
-        if not rows:
+        trs = table.xpath(".//tr")
+        # column labels come from <thead>, or a first row made only of <th>; a first row with a
+        # <th> row label is data (irs limit tables), and must not become labels for the rest
+        head = table.xpath("./thead//tr")
+        if head:
+            header_tr = head[0]
+        elif trs and trs[0].xpath("./th") and not trs[0].xpath("./td"):
+            header_tr = trs[0]
+        else:
+            header_tr = None
+        headers = [_text(c) for c in header_tr.xpath("./th|./td")] if header_tr is not None else []
+        body = [r for r in ([_text(c) for c in tr.xpath("./th|./td")] for tr in trs if tr is not header_tr) if any(r)]
+        if not body:
             continue
-        has_header = bool(table.xpath(".//thead") or table.xpath(".//tr[1]/th"))
-        headers, body = (rows[0], rows[1:]) if has_header else ([], rows)
         div = lxml.html.Element("div")
         caption = table.xpath("./caption")
         if caption:
@@ -72,7 +83,13 @@ def fetch_source(entry: dict, client: httpx.Client, today: date) -> str:
     resp = client.get(entry["url"], headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=30)
     if resp.status_code != 200:
         raise FetchError(f"HTTP {resp.status_code}")
-    body = trafilatura.extract(_flatten_tables(resp.text), output_format="markdown", include_links=False)
+    if not resp.text.strip():
+        raise FetchError("empty page")
+    try:
+        html = _flatten_tables(resp.text)
+    except (lxml.etree.ParserError, ValueError) as exc:
+        raise FetchError(f"unparseable page ({exc})")
+    body = trafilatura.extract(html, output_format="markdown", include_links=False)
     body = "\n".join(line for line in (body or "").split("\n") if not _BOILERPLATE.match(line.strip()))
     words = len(body.split())
     if words < MIN_WORDS:

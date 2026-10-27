@@ -79,3 +79,21 @@ Run them from `backend/`:
 **What it does:** Checks that the request carries the browser `User-Agent`.
 
 **Why it's there:** Some government sites reject clients that don't look like a browser. Without the header, fetching would fail on the real sites even though every other test passes.
+
+## `test_unparseable_page_reported_others_written`
+
+**What it does:** Runs two entries: a page that can't be parsed, then a good one. It's run twice, once with an empty 200 response and once with a page that starts with an `<?xml … encoding="UTF-8"?>` declaration. Either way, the run must finish, report at most the bad slug, and still write the good page.
+
+**Why it's there:** lxml raises on both inputs. Before this fix, that exception escaped `fetch_all` and stopped the whole `--refresh` run. A government CDN returning one blank page would then leave every later source un-refreshed, with no list of failures.
+
+## `test_row_headers_are_not_column_labels`
+
+**What it does:** Flattens a table whose rows start with `<th>` row labels (`Age 50+ | $8,000`, `Under 50 | $7,000`) and has no header row. It checks that each row keeps its own label and figure.
+
+**Why it's there:** The old check treated any first row containing a `<th>` as column headers. That turned "Age 50+" and "$8,000" into labels and produced `Under 50 — $8,000: $7,000`, attaching the wrong figure to a row. IRS limit tables have exactly this shape, and the agent cites these figures as fact.
+
+## `test_blank_thead_keeps_first_data_row`
+
+**What it does:** Flattens a table with an empty `<thead>` and checks that the first data row is still a data row.
+
+**Why it's there:** The header has to be chosen before empty rows are filtered out. Otherwise a blank header row is skipped and the first real row becomes the column labels.

@@ -2,6 +2,7 @@ import json
 from datetime import date
 
 import httpx
+import pytest
 
 from app.rag.chunk import parse_source
 from app.rag.fetch import USER_AGENT, fetch_all
@@ -163,3 +164,41 @@ def test_sends_user_agent(tmp_path):
     fetch_all(kb, client({URL: html(page())}, seen), today=TODAY)
 
     assert [r.headers["user-agent"] for r in seen] == [USER_AGENT]
+
+
+# one blank or xhtml-declared page must become a FAIL line, not a traceback that stops the run
+@pytest.mark.parametrize("bad", [
+    lambda: httpx.Response(200, content=b""),
+    lambda: httpx.Response(200, text='<?xml version="1.0" encoding="UTF-8"?>' + page()),
+], ids=["empty-body", "xml-declaration"])
+def test_unparseable_page_reported_others_written(tmp_path, bad):
+    kb = make_kb(tmp_path, entry("bad", url=URL + "/bad"), entry())
+
+    failed = fetch_all(kb, client({URL + "/bad": bad, URL: html(page())}), today=TODAY)
+
+    assert failed == ["bad"] or (kb / "sources" / "bad.md").exists()
+    assert (kb / "sources" / "good.md").exists()
+
+
+def flattened_lines(tmp_path, table):
+    kb = make_kb(tmp_path, entry())
+    fetch_all(kb, client({URL: html(page().replace(TABLE, table))}), today=TODAY)
+    return parse_source(kb / "sources" / "good.md")[1].splitlines()
+
+
+# irs limit tables label rows with <th>; that first row is data, not column headers
+def test_row_headers_are_not_column_labels(tmp_path):
+    lines = flattened_lines(tmp_path, "<table><tbody><tr><th>Age 50+</th><td>$8,000</td></tr>"
+                                      "<tr><th>Under 50</th><td>$7,000</td></tr></tbody></table>")
+
+    assert "Age 50+ — $8,000" in lines
+    assert "Under 50 — $7,000" in lines
+
+
+def test_blank_thead_keeps_first_data_row(tmp_path):
+    lines = flattened_lines(tmp_path, "<table><thead><tr><th></th><th></th></tr></thead><tbody>"
+                                      "<tr><td>Age 50+</td><td>$8,000</td></tr>"
+                                      "<tr><td>Under 50</td><td>$7,000</td></tr></tbody></table>")
+
+    assert "Age 50+ — $8,000" in lines
+    assert "Under 50 — $7,000" in lines
