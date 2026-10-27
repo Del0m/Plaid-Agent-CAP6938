@@ -28,3 +28,8 @@ LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 # every prompt the privacy gateway builds is appended here (git-ignored)
 # `or`, not a getenv default: .env.example leaves it blank, and Path("") would be the cwd
 PROMPT_AUDIT_PATH = Path(os.getenv("PROMPT_AUDIT_PATH") or Path(__file__).parent.parent / "logs" / "prompt_audit.jsonl")
+
+# embedding model for the knowledge base (architecture section 8); agents/llm.py is the only reader
+OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+# knowledge base root: sources.json, sources/ (committed), sources/local/ and chroma/ (git-ignored)
+KB_DIR = Path(os.getenv("KB_DIR") or Path(__file__).parent.parent.parent / "kb")
