@@ -194,10 +194,12 @@ Use **structured output** (Pydantic models) for `diagnose` and `decide_action` s
 
 When creating the Plaid link token, set `transactions.days_requested` to at least 180: the budget uses the last 90 days, and recurring detection (section 6a.1) needs longer to catch monthly streams reliably.
 
-1. Drop transfers, income, and credit-card payments (they're not spending; they'd double count).
-2. Mark **fixed** categories (rent, utilities, loan payments, insurance, and subscriptions found by the recurring detector in section 6a.1). Budget = the most recent amount.
-3. For **flexible** categories, compute monthly totals for each of the last 3 months. Budget = **median** × 1.05. Median, not mean, so one vacation doesn't inflate the budget.
-4. Store which transactions you treated as outliers so the agent can explain the budget.
+The maths is `budget_engine/fit.py` (`fit_budget`), a pure function over the transactions and `today`. The shared spending filter and month helpers are in `budget_engine/txns.py`.
+
+1. Drop transfers, income, and credit-card payments (they're not spending; they'd double count). Refunds are **netted** within a category (purchases − refunds, floored at $0): a returned purchase isn't spending.
+2. Mark **fixed** categories (rent, utilities, loan payments, insurance, and subscriptions found by the recurring detector in section 6a.1). Budget = the most recent month with a non-zero total, with no markup. Rent paid a day early lands in the previous month, so a $0 latest month doesn't give a $0 line.
+3. For **flexible** categories, compute monthly totals for each of the last 3 **complete** calendar months (the current partial month is never fitted; shorter history uses fewer months). Budget = **median** × 1.05. Median, not mean, so one vacation doesn't inflate the budget. A flexible category whose median is $0 (an occasional purchase) gets no line and is listed as skipped, since a $0 limit would flag every time.
+4. Store the outliers so the agent can explain the budget. An outlier is a **month** above 1.5× the category median, kept with its 3 largest transactions ("Travel was $1,900 in August and was left out"). It's for explanation only; the median is unchanged.
 
 Learning exercise: compare median vs mean vs trimmed mean on your benchmark users and record the "initial budget accuracy" metric for each.
 
@@ -214,8 +216,15 @@ flag if spent > limit                          # any category, any day
 
 The `days_elapsed >= 5` guard avoids flagging on day 1 because of one grocery trip. Fixed categories are lumpy (rent lands on the 1st), so judge them only against their limit, not pace. Tune these thresholds with the benchmark, then record the chosen values in the decision log.
 
+This is `budget_engine/pace.py` (`evaluate`). Spending in a category with no budget line is reported to the graph as `unbudgeted` and never flagged; the graph (TPC-19) decides whether to suggest a line.
+
 ### 6.5 Period close and adaptation
 At the end of each calendar month: for each line, compare `limit` vs actual. Apply any `adjust_next_budget` actions the user accepted. For lines without an action, nudge toward actual with smoothing: `new = 0.7 * old + 0.3 * actual`, clamped to ±15% per period. This keeps the budget from chasing one bad month. The "does the budget improve over time" benchmark checks this works.
+
+This is `budget_engine/close.py` (`close_period`):
+- An accepted value is used as-is, with no clamp.
+- A **fixed** line follows the actual amount (a rent increase is adopted, not smoothed toward), and keeps its old limit when the actual is $0.
+- Amounts round half up to the cent.
 
 ### 6.6 Human in the loop
 Anything that changes the user's money or their budget without being asked goes through LangGraph's `interrupt()` and becomes an alert with status `pending_user`. The agent proposes; the user disposes.
@@ -327,6 +336,8 @@ Implementation steps:
 **`search_kb` is the one tool that doesn't go through the gateway.** Its results are public guidance with no user data, and its query (written by the model, so it could echo user details) goes only to the local embedding model, so nothing reaches the audit log. Chroma runs with telemetry turned off.
 
 Because the LLM runs locally (Ollama), prompts never leave your machine, which removes the main leak risk from the proposal. Keep the gateway anyway: it still limits what ends up in logs and traces, it keeps prompts small (which matters a lot for an 8B model's accuracy and speed), and it means a hosted model can be swapped in for comparison without a privacy regression. In the report, say clearly that the privacy guarantee comes from local inference *plus* minimization, and that a hosted model would rely on minimization alone.
+
+**Follow-up:** the gateway's `get_spending` still excludes refunds, while the budget engine nets them (section 6.3). Until `get_spending` nets them too, a chat spending total can differ from the budget's pace for the same category.
 
 ---
 
@@ -585,6 +596,9 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-27 | Eval judge is `gemma3:12b` (Ollama, temperature 0) | `qwen2.5:14b` became the chat model, and `llama3.1:8b` and `mistral` are the comparison agents. A fourth family grades all three without grading itself; ~8 GB fits next to qwen in 24 GB and stays local |
 | 2026-10-27 | Golden-answer match is a rule check on listed facts, not an LLM verdict | Deterministic and free; a wrong number fails loudly. The judge covers how the answer reads |
 | 2026-10-27 | The eval harness runs in-process (the same graph and tools as `POST /chat`, one throwaway DB per run), not through the HTTP API | Synthetic users are possible (the API only knows the dev user and `dev.db`), there's no server to manage, and it tests the real agent code |
+| 2026-10-27 | Budget totals net refunds within a category (purchases − refunds, floored at $0) | A returned purchase isn't spending, and counting it would raise false overspend alerts. `get_spending` still excludes refunds until it's aligned (section 7 follow-up) |
+| 2026-10-27 | Budget outliers are months above 1.5× the category median, kept with their top 3 transactions for explanation only | Keeps the median × 1.05 maths exactly; the agent can still say "Travel was $1,900 in August and was left out" |
+| 2026-10-27 | A fixed budget line is the latest non-zero month with no markup, and follows the actual amount at period close (keeping its limit on a $0 month) | Rent paid a day early lands in the previous month; a rent increase should be adopted, not smoothed toward |
 | | | |
 
 ---
