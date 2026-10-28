@@ -19,7 +19,7 @@ HISTORY_MONTHS = 3
 class OutlierMonth:
     month: date                  # first of the month
     total_cents: int
-    median_cents: int
+    median_cents: int            # the center the month was compared with; always the median in production
     top_txns: tuple[Txn, ...]    # up to 3, largest amount first
 
 
@@ -36,9 +36,11 @@ class FittedLine:
 class FitResult:
     lines: tuple[FittedLine, ...]     # sorted by category
     skipped: tuple[str, ...]          # flexible categories whose median is 0, sorted
+    window: tuple[date, ...] = ()     # the fitted months (first of each), oldest first
 
 
-def fit_budget(txns: Iterable[Txn], today: date, fixed: frozenset[str] = FIXED_DEFAULT) -> FitResult:
+def fit_budget(txns: Iterable[Txn], today: date, fixed: frozenset[str] = FIXED_DEFAULT,
+               center: Literal["median", "mean"] = "median") -> FitResult:
     txns = list(txns)    # read more than once below; a generator would come back empty
     if not txns:
         return FitResult((), ())
@@ -61,22 +63,27 @@ def fit_budget(txns: Iterable[Txn], today: date, fixed: frozenset[str] = FIXED_D
     for cat in categories:
         totals = tuple(t.get(cat, 0) for t in per_month)
         if cat in fixed:
-            # rent paid a day early lands in the previous month, so take the latest month that has it
-            latest = next(total for total in reversed(totals) if total > 0)
-            lines.append(FittedLine(cat, "fixed", latest, totals, ()))
+            # rent paid early puts two rents in one month and none in the next; the median sees through
+            # that. months before the first payment (a new lease) don't count
+            first = next(i for i, total in enumerate(totals) if total > 0)
+            limit = round_cents(Decimal(str(statistics.median(totals[first:]))))
+            lines.append(FittedLine(cat, "fixed", limit, totals, ()))
             continue
-        median = Decimal(str(statistics.median(totals)))
-        if median == 0:
+        if center == "mean":
+            mid = Decimal(sum(totals)) / len(totals)
+        else:
+            mid = Decimal(str(statistics.median(totals)))
+        if mid == 0:
             # an occasional purchase would get a $0 limit that flags every time
             skipped.append(cat)
             continue
         outliers = tuple(
-            OutlierMonth(m, total, round_cents(median), _top_txns(spent, cat, m))
-            for m, total in zip(months, totals) if total > median * Decimal(str(OUTLIER_RATIO))
+            OutlierMonth(m, total, round_cents(mid), _top_txns(spent, cat, m))
+            for m, total in zip(months, totals) if total > mid * Decimal(str(OUTLIER_RATIO))
         )
-        limit = round_cents(median * Decimal(str(FLEX_MARKUP)))
+        limit = round_cents(mid * Decimal(str(FLEX_MARKUP)))
         lines.append(FittedLine(cat, "flexible", limit, totals, outliers))
-    return FitResult(tuple(lines), tuple(skipped))
+    return FitResult(tuple(lines), tuple(skipped), tuple(months))
 
 
 def _top_txns(spent: list[Txn], category: str, month: date) -> tuple[Txn, ...]:
