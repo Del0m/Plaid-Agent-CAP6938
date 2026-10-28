@@ -6,7 +6,7 @@ from typing import Iterable, Literal
 
 from app.budget_engine.txns import Txn, add_months, category_totals, month_end, month_start, round_cents, spending
 
-# initial budget from history (architecture 6.3). fixed lines take the latest amount; flexible lines
+# initial budget from history (architecture 6.3). fixed lines take a typical month's amount; flexible lines
 # take the median month plus a small cushion, so one vacation doesn't inflate the budget.
 
 FIXED_DEFAULT = frozenset({"RENT_AND_UTILITIES", "LOAN_PAYMENTS"})
@@ -63,10 +63,10 @@ def fit_budget(txns: Iterable[Txn], today: date, fixed: frozenset[str] = FIXED_D
     for cat in categories:
         totals = tuple(t.get(cat, 0) for t in per_month)
         if cat in fixed:
-            # rent paid early puts two rents in one month and none in the next; the median sees through
-            # that. months before the first payment (a new lease) don't count
-            first = next(i for i, total in enumerate(totals) if total > 0)
-            limit = round_cents(Decimal(str(statistics.median(totals[first:]))))
+            # rent paid early puts two rents in one month and none in the next. a fixed bill is never really
+            # $0, so only months that had it count, and the lower median is always a real month's amount
+            # (an even count would otherwise average one rent with two)
+            limit = statistics.median_low([total for total in totals if total > 0])
             lines.append(FittedLine(cat, "fixed", limit, totals, ()))
             continue
         if center == "mean":

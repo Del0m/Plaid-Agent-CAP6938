@@ -208,3 +208,15 @@ def test_race_returns_existing_period(db, monkeypatch):
         monkeypatch.setattr(initialize, "_latest_period", racy)
         assert initialize_budget(s, "u1", TODAY).id == existing
     assert counts(db) == (1, 0)
+
+
+def test_other_integrity_error_raises(db, monkeypatch):
+    with db() as s:
+        history(s, user(s))
+        s.add(period())
+        s.commit()
+        # the commit fails but no period can be found afterwards, so it wasn't the race: the error must
+        # surface instead of reading as "not enough history yet"
+        monkeypatch.setattr(initialize, "_latest_period", lambda session, user_id: None)
+        with pytest.raises(IntegrityError):
+            initialize_budget(s, "u1", TODAY)

@@ -107,6 +107,12 @@ Uses the `db` fixture from `conftest.py` (see [test_plaid.md](test_plaid.md#shar
 
 **Why it's there:** The scheduler and a manual run can start together. The loser must roll back cleanly and use the winner's budget, not crash or leave half a budget behind.
 
+## `test_other_integrity_error_raises`
+
+**What it does:** The commit fails on the unique constraint, but no period can be found afterwards (the lookup is patched to miss). `initialize_budget` re-raises the `IntegrityError` instead of returning `None`.
+
+**Why it's there:** `None` means "not enough history yet", so the daily run would retry forever and nobody would see the real error. Only a race, where another run's period now exists, is safe to swallow (found in the TPC-18 final review).
+
 ## Not covered
 
 - **The Alembic migration** is checked by hand, not by pytest: on a scratch SQLite file, `alembic upgrade head`, `alembic check` (no drift from the models), `alembic downgrade -1`, then `upgrade head` again.

@@ -29,7 +29,8 @@ def _latest_period(session: Session, user_id: str) -> Optional[BudgetPeriod]:
 
 
 # runs only when the user has no budget at all; opening later months is period close's job.
-# returns None (and writes nothing) until there's a complete month to fit, so the next run retries
+# returns None (and writes nothing) until there's a complete month to fit, so the next run retries.
+# it commits, like sync_transactions, so call it with nothing else pending in the session
 def initialize_budget(session: Session, user_id: str, today: date,
                       fixed: frozenset[str] = FIXED_DEFAULT) -> Optional[BudgetPeriod]:
     existing = _latest_period(session, user_id)
@@ -49,9 +50,13 @@ def initialize_budget(session: Session, user_id: str, today: date,
     try:
         session.commit()
     except IntegrityError:
-        # another run opened this month's period between our check and our commit
+        # another run opened this month's period between our check and our commit. with no period to
+        # show for it, the error was something else and must not pass as "not enough history yet"
         session.rollback()
-        return _latest_period(session, user_id)
+        winner = _latest_period(session, user_id)
+        if winner is None:
+            raise
+        return winner
     return period
 
 

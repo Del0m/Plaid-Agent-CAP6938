@@ -2,7 +2,7 @@
 
 These tests cover `app/budget_engine/fit.py`, which turns transaction history into the user's first budget (TPC-17, architecture 6.3). The rules:
 - The history is the last 3 complete calendar months.
-- **Fixed** categories (rent, loan payments) get the median month, counted from the first month they appear (TPC-18 replaced "the latest month").
+- **Fixed** categories (rent, loan payments) get the lower median of the months that had the bill (TPC-18 replaced "the latest month").
 - **Flexible** categories get the median month × 1.05. `center="mean"` uses the mean instead; it exists only for the median-vs-mean accuracy comparison (TPC-18).
 - A month above 1.5× the median is recorded as an outlier, so the agent can explain it.
 - A flexible category whose median is $0 is skipped.
@@ -48,7 +48,7 @@ Run them from `backend/`:
 
 **What it does:** Rent paid Jul 1, Aug 1 and Aug 31 (September's, a day early) gives totals of $1,500 / $3,000 / $0 and a limit of $1,500.
 
-**Why it's there:** Paying early puts two rents in one month. The old "latest non-zero month" rule turned this into a $3,000 rent line, 100% off the next month (TPC-18). The median of the three months is one rent.
+**Why it's there:** Paying early puts two rents in one month. The old "latest non-zero month" rule turned this into a $3,000 rent line, 100% off the next month (TPC-18). The lower median of the paying months is one rent.
 
 ## `test_fixed_double_in_last_month`
 
@@ -60,7 +60,7 @@ Run them from `backend/`:
 
 **What it does:** Rent first paid in September, with food in July keeping the window at July-September, gives totals $0 / $0 / $1,500 and a limit of $1,500.
 
-**Why it's there:** A median over all three months would be $0. Months before the first payment are before the lease, not unpaid rent, so they're left out.
+**Why it's there:** A median over all three months would be $0. Months with no rent (here, before the lease) don't count.
 
 ## `test_fixed_increase_not_adopted_at_init`
 
@@ -68,11 +68,17 @@ Run them from `backend/`:
 
 **Why it's there:** It pins the cost of the median rule. A rent increase isn't adopted at init; period close (where a fixed line follows the actual amount) adopts it one month later.
 
-## `test_fixed_median_rounds_half_up`
+## `test_fixed_even_months_takes_lower`
 
-**What it does:** Totals of 10001¢ and 10000¢ have a median of 10000.5¢, and the limit is 10001¢.
+**What it does:** Rent totals of $0 / $1,500 / $3,000 give a limit of $1,500, not $2,250.
 
-**Why it's there:** Money rounds half up. Python's `round()` (banker's rounding) would give 10000¢, and so would the old latest-month rule, so this fails on either mistake.
+**Why it's there:** This is the usual first-link case: Plaid's history starts mid-July, so July has no rent, and October's rent was paid early on Sep 30. With two paying months, a plain median averages one rent with two. The lower median is always a real month's amount (found in the TPC-18 final review).
+
+## `test_fixed_zero_month_between`
+
+**What it does:** Rent totals of $0 / $1,500 / $0 give $1,500, not $750.
+
+**Why it's there:** A fixed bill is never really $0 in a month; a zero is an artifact of when the payment landed. Only months that had the bill count.
 
 ## `test_mean_center_flexible`
 

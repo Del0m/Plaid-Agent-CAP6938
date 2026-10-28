@@ -84,9 +84,13 @@ def test_fixed_increase_not_adopted_at_init():
     assert rent(fit_budget(monthly(RENT, 150000, 150000, 160000), TODAY)).limit_cents == 150000
 
 
-def test_fixed_median_rounds_half_up():
-    # median 10000.5: half up gives 10001, banker's rounding (and the latest month) would give 10000
-    assert rent(fit_budget(monthly(RENT, 10001, 10000, start_month=8), TODAY)).limit_cents == 10001
+def test_fixed_even_months_takes_lower():
+    # first link mid-july: july has no rent, and october's rent was paid early on sep 30
+    assert rent(fit_budget(monthly(RENT, 0, 150000, 300000), TODAY)).limit_cents == 150000
+
+
+def test_fixed_zero_month_between():
+    assert rent(fit_budget(monthly(RENT, 0, 150000, 0) + NORMAL, TODAY)).limit_cents == 150000
 
 
 def test_mean_center_flexible():
