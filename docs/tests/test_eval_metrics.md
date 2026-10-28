@@ -5,7 +5,7 @@ These tests cover `eval/metrics.py`, which scores one eval run (TPC-16) three wa
 - **semantic similarity** between the answer and the golden answer;
 - a **coherence judge** (`gemma3:12b`).
 
-It also checks whether the expected tools were called and the expected sources retrieved, and it summarizes many runs. The facts check is deterministic on purpose, so a wrong number fails loudly however fluent the answer is.
+It also checks whether the expected tools were called and the expected sources retrieved, and it summarizes many runs. `mape` (TPC-18) scores the budget accuracy eval instead of chat runs. The facts check is deterministic on purpose, so a wrong number fails loudly however fluent the answer is.
 
 Run them from `backend/`:
 
@@ -163,3 +163,21 @@ The same three rules apply to `sources_ok` with `source_url`s.
 **What it does:** When a scenario expects `get_debts` and the run never called it, `score_run` passes that to the judge.
 
 **Why it's there:** It connects the scenario's expected tools to the judge's note in the path the CLI actually runs.
+
+## `test_mape_known_case`
+
+**What it does:** Limits of 110, 90 and 200 against actuals of 100 give errors of 10%, 10% and 100%, so the MAPE is 40.0.
+
+**Why it's there:** It pins the definition used for "initial budget accuracy" (architecture 10.2). Over and under count the same, and each line weighs the same however big its category is.
+
+## `test_mape_empty`
+
+**What it does:** No pairs gives `None`, not 0 or an error.
+
+**Why it's there:** A profile whose lines all had $0 actual has nothing to score. Reporting 0% would look like a perfect budget.
+
+## `test_mape_rounds`
+
+**What it does:** One pair (1, 3) gives 66.7.
+
+**Why it's there:** Results are compared across runs and written to the decision log, so they're rounded to one decimal place.

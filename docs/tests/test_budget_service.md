@@ -13,7 +13,7 @@ Run them from `backend/`:
 
 ## Shared setup
 
-Uses the `db` fixture from `conftest.py` (see [test_plaid.md](test_plaid.md#shared-setup-backendtestsconftestpy)) and `add_user` from `tests/factories.py`.
+Uses the `db` fixture from `conftest.py` (see [test_plaid.md](test_plaid.md#shared-setup-backendtestsconftestpy)) and `add_user`, `add_account` and `add_txn` from `tests/factories.py`.
 
 - `period(user_id, start)` builds an unsaved October 2026 `BudgetPeriod`.
 - `TODAY` is Oct 15 2026, so the fit window is July, August and September 2026.

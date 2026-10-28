@@ -203,3 +203,11 @@ def summarize(scored: list[dict]) -> dict:
         scenarios[sid] = {**_stats(items), "similarity_min": min(sims), "similarity_max": max(sims),
                           "fact_score_min": min(facts), "fact_score_max": max(facts)}
     return {"overall": _stats(scored) if scored else {"runs": 0}, "scenarios": scenarios}
+
+
+# initial budget accuracy (architecture 10.2): mean absolute percentage error of each limit against the
+# next month's actual. pairs are (limit_cents, actual_cents) with actual > 0; a percentage, so float is fine
+def mape(pairs: list[tuple[int, int]]) -> Optional[float]:
+    if not pairs:
+        return None
+    return round(mean(abs(limit - actual) / actual for limit, actual in pairs) * 100, 1)
