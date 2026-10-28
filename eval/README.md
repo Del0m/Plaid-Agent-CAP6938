@@ -95,3 +95,32 @@ Tips:
 - Keep a number fact to a figure the tools return directly. The design keeps arithmetic out of the model, so a fact the model would have to compute tests something else.
 - Remember the gateway's rules when choosing expected numbers. Spending totals count money out only, so refunds are excluded, and the default window is the last 30 days.
 - Run `cd backend && ../venv/bin/python -m pytest tests/test_eval_fixtures.py` after adding a file; `test_committed_scenarios_load` checks every committed scenario parses (update its count).
+
+## Budget accuracy
+
+A second, separate eval: how close is a user's **first budget** to what they actually spend the next month (architecture 6.3 and 10.2)? It makes no LLM calls and needs no Ollama, so it runs in seconds. From the repo root:
+
+```bash
+venv/bin/python eval/budget_accuracy.py
+```
+
+For each synthetic user in `eval/budget_users.py`, it:
+- seeds a throwaway database;
+- runs the real `initialize_budget` and prints the stored budget (limits, outlier months, skipped categories), so you can check it looks sensible;
+- fits May-July with the **median** and with the **mean** and scores each against August.
+
+The scores per user and pooled are:
+- **MAPE** over lines whose category had August spending;
+- **zero-actual lines**, which got a limit but had no spending, so a percentage can't score them;
+- **unbudgeted** categories, which had spending but no line.
+
+Results go to `eval/results/<YYYY-MM-DD>/budget_accuracy/results.json`, with `-2` for a second run the same day.
+
+### Adding a budget user
+
+Add a `Profile` to `PROFILES` in `eval/budget_users.py`. A profile is a few patterns:
+- `Weekly(category, merchant, cents, jitter, weekday, growth)`;
+- `Monthly(category, merchant, cents, day, moved)`, where `moved` pays one month on a different date;
+- `Once(category, merchant, cents, day)`.
+
+Each profile has its own seed, so its transactions never change between runs. Use Plaid primary categories. Include `BASE` so the user has income and a transfer to filter out. Then add a test to `backend/tests/test_budget_users.py` checking that the planted fact really is in the generated transactions, and document it in `docs/tests/test_budget_users.md`.

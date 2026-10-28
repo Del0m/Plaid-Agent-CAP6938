@@ -1,0 +1,514 @@
+{
+  "git_commit": "ff775fff7b8aba9dbdb02570fed20be768413e23",
+  "profiles": [
+    {
+      "id": "steady",
+      "description": "flat groceries, dining, fuel and rent",
+      "budget": {
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "outlier_months": []
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 72609,
+            "outlier_months": []
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "outlier_months": []
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 16961,
+            "outlier_months": []
+          }
+        ],
+        "skipped": []
+      },
+      "median": {
+        "mape": 5.8,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 72609,
+            "actual_cents": 74476
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 16961,
+            "actual_cents": 20154
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      },
+      "mean": {
+        "mape": 4.0,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 73626,
+            "actual_cents": 74476
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 18156,
+            "actual_cents": 20154
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      }
+    },
+    {
+      "id": "vacation",
+      "description": "steady, plus a $1,900 June trip",
+      "budget": {
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "outlier_months": []
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 71792,
+            "outlier_months": []
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "outlier_months": []
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 17613,
+            "outlier_months": []
+          },
+          {
+            "category": "TRAVEL",
+            "kind": "flexible",
+            "limit_cents": 26250,
+            "outlier_months": [
+              "2026-06-01"
+            ]
+          }
+        ],
+        "skipped": []
+      },
+      "median": {
+        "mape": 9.4,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 71792,
+            "actual_cents": 77813
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 17613,
+            "actual_cents": 20684
+          },
+          {
+            "category": "TRAVEL",
+            "kind": "flexible",
+            "limit_cents": 26250,
+            "actual_cents": 22000
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      },
+      "mean": {
+        "mape": 58.8,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 74122,
+            "actual_cents": 77813
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 18491,
+            "actual_cents": 20684
+          },
+          {
+            "category": "TRAVEL",
+            "kind": "flexible",
+            "limit_cents": 82250,
+            "actual_cents": 22000
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      }
+    },
+    {
+      "id": "early-rent",
+      "description": "steady, but July's rent is paid on June 30",
+      "budget": {
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "outlier_months": []
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 74248,
+            "outlier_months": []
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "outlier_months": []
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 17376,
+            "outlier_months": []
+          }
+        ],
+        "skipped": []
+      },
+      "median": {
+        "mape": 5.8,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 74248,
+            "actual_cents": 76557
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 17376,
+            "actual_cents": 20514
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      },
+      "mean": {
+        "mape": 4.6,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 73510,
+            "actual_cents": 76557
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 18565,
+            "actual_cents": 20514
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      }
+    },
+    {
+      "id": "rising",
+      "description": "groceries up 10% a month",
+      "budget": {
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "outlier_months": []
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 78303,
+            "outlier_months": []
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "outlier_months": []
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 16756,
+            "outlier_months": []
+          }
+        ],
+        "skipped": []
+      },
+      "median": {
+        "mape": 9.1,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 78303,
+            "actual_cents": 94504
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 16756,
+            "actual_cents": 19526
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      },
+      "mean": {
+        "mape": 7.7,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 77316,
+            "actual_cents": 94504
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 18073,
+            "actual_cents": 19526
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      }
+    },
+    {
+      "id": "occasional",
+      "description": "steady, plus one $300 purchase in June",
+      "budget": {
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "outlier_months": []
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 71918,
+            "outlier_months": []
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "outlier_months": []
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 16786,
+            "outlier_months": []
+          }
+        ],
+        "skipped": [
+          "GENERAL_MERCHANDISE"
+        ]
+      },
+      "median": {
+        "mape": 4.8,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 71918,
+            "actual_cents": 73411
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 16786,
+            "actual_cents": 19110
+          }
+        ],
+        "zero_actual_lines": [],
+        "unbudgeted": []
+      },
+      "mean": {
+        "mape": 3.0,
+        "lines": [
+          {
+            "category": "ENTERTAINMENT",
+            "kind": "flexible",
+            "limit_cents": 1679,
+            "actual_cents": 1599
+          },
+          {
+            "category": "FOOD_AND_DRINK",
+            "kind": "flexible",
+            "limit_cents": 74895,
+            "actual_cents": 73411
+          },
+          {
+            "category": "GENERAL_MERCHANDISE",
+            "kind": "flexible",
+            "limit_cents": 10500,
+            "actual_cents": 0
+          },
+          {
+            "category": "RENT_AND_UTILITIES",
+            "kind": "fixed",
+            "limit_cents": 150000,
+            "actual_cents": 150000
+          },
+          {
+            "category": "TRANSPORTATION",
+            "kind": "flexible",
+            "limit_cents": 18167,
+            "actual_cents": 19110
+          }
+        ],
+        "zero_actual_lines": [
+          "GENERAL_MERCHANDISE"
+        ],
+        "unbudgeted": []
+      }
+    }
+  ],
+  "pooled": {
+    "median": 7.1,
+    "mean": 17.7
+  }
+}
