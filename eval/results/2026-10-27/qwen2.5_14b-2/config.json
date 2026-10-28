@@ -1,0 +1,16 @@
+{
+  "model": "qwen2.5:14b",
+  "judge": "gemma3:12b",
+  "embeddings": "nomic-embed-text",
+  "runs": 3,
+  "commit": "07b219148a708cb3e6d266bb985ad5f3680eaf8d",
+  "scenarios": [
+    "debt-highest-apr",
+    "kb-roth-vs-401k",
+    "mixed-card-vs-emergency",
+    "savings-balance",
+    "spending-food-30d"
+  ],
+  "started_at": "2026-10-27T22:02:14Z",
+  "finished_at": "2026-10-27T22:06:24Z"
+}

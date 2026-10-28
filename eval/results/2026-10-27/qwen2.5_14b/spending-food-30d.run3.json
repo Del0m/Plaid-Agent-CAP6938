@@ -1,0 +1,66 @@
+{
+  "record": {
+    "scenario_id": "spending-food-30d",
+    "run": 3,
+    "answer": "In the last 30 days, you spent $124.25 on food and drink. This includes $42.10 at Chipotle, $18.75 at Starbucks, and $63.40 at Trader Joe's.\n\nThis is general information, not financial advice.",
+    "tool_calls": [
+      {
+        "name": "get_spending",
+        "args": {
+          "category": "FOOD_AND_DRINK"
+        }
+      }
+    ],
+    "tool_results": [
+      "{\"user\":\"user_a91a\",\"purpose\":\"spending\",\"data\":{\"category\":\"FOOD_AND_DRINK\",\"total\":124.25,\"transactions\":[{\"date\":\"2026-10-23\",\"amount\":42.1,\"merchant\":\"Chipotle\"},{\"date\":\"2026-10-16\",\"amount\":18.75,\"merchant\":\"Starbucks\"},{\"date\":\"2026-10-07\",\"amount\":63.4,\"merchant\":\"Trader Joe's\"}]}}"
+    ],
+    "sources": [
+      {
+        "title": "Budgeting basics: The 50-30-20 rule",
+        "section": "Wants: 30%",
+        "source_url": "https://www.unfcu.org/guides/the-50-30-20-rule",
+        "text": "You subscribe to a streaming service to watch your favorite show, not because you need the subscription to live. Wants are things you enjoy that you spend money on by choice, such as:\n\n- Subscriptions\n- Supplies for hobbies\n- Restaurant meals\n- Vacations"
+      },
+      {
+        "title": "Budgeting basics: The 50-30-20 rule",
+        "section": "Savings: 20%",
+        "source_url": "https://www.unfcu.org/guides/the-50-30-20-rule",
+        "text": "The remaining 20% of your budget should go toward the future. You may put money in an emergency fund, contribute to a retirement account, or save toward a down payment on a home. Paying down debt beyond the minimum payment amount belongs in this category, too."
+      },
+      {
+        "title": "Budgeting basics: The 50-30-20 rule",
+        "section": "Needs: 50%",
+        "source_url": "https://www.unfcu.org/guides/the-50-30-20-rule",
+        "text": "About half of your budget should go toward needs. These are expenses that must be met no matter what, such as:\n\n- Utility bills\n- Rent or mortgage payments\n- Health care\n- Groceries\n\nIf you can honestly say “I can’t live without it,” you have identified a need. Minimum required payments on a credit card or a loan also belong in this category."
+      },
+      {
+        "title": "Budgeting basics: The 50-30-20 rule",
+        "section": "In brief",
+        "source_url": "https://www.unfcu.org/guides/the-50-30-20-rule",
+        "text": "- Understanding your spending can help you better plan for the future.\n- The 50-30-20 rule organizes spending into needs, wants, and goals.\n\nCreating a budget can help you make confident decisions and enjoy peace of mind. A detailed budget, though, can be complex to manage.\n\nThe 50-30-20 rule splits expenses into just three categories. It also offers recommendations on how much money to use for each. With some basic information, you can get on the road to financial well-being."
+      }
+    ],
+    "latency_s": 8.140216957777739,
+    "error": null
+  },
+  "scores": {
+    "facts": {
+      "found": 1,
+      "total": 1,
+      "missing": [],
+      "forbidden_hits": [],
+      "passed": true,
+      "score": 1.0
+    },
+    "tools_ok": true,
+    "sources_ok": true,
+    "similarity": 0.9947398198092613,
+    "judge": {
+      "coherent": 5,
+      "consistent_with_data": 5,
+      "safe": 5,
+      "reason": "The answer accurately summarizes the provided data and includes a standard disclaimer."
+    },
+    "judge_passed": true
+  }
+}

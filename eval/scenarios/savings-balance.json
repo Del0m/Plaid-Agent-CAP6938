@@ -1,0 +1,17 @@
+{
+  "id": "savings-balance",
+  "question": "How much is in my savings account?",
+  "user": {
+    "accounts": [
+      {"name": "Everyday Checking", "type": "depository", "subtype": "checking", "balance": 1310.00},
+      {"name": "High Yield Savings", "type": "depository", "subtype": "savings", "balance": 8420.55}
+    ],
+    "transactions": []
+  },
+  "golden_answer": "Your High Yield Savings account has $8,420.55. This is general information, not financial advice.",
+  "expect": {
+    "facts": [{"number": 8420.55, "tol": 0.01}],
+    "forbid": ["http"],
+    "tools": ["get_accounts"]
+  }
+}

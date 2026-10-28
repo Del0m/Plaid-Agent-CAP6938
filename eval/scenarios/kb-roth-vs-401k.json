@@ -1,0 +1,16 @@
+{
+  "id": "kb-roth-vs-401k",
+  "question": "What's the difference between a Roth IRA and a 401(k)?",
+  "user": {
+    "accounts": [
+      {"name": "Everyday Checking", "type": "depository", "subtype": "checking", "balance": 2600.00}
+    ],
+    "transactions": []
+  },
+  "golden_answer": "A Roth IRA is an individual account you open yourself, funded with after-tax dollars, so qualified withdrawals in retirement are tax-free; it has income limits for contributing. A traditional 401(k) is offered by an employer, contributions are usually pre-tax and lower your taxable income now, withdrawals are taxed later, and its contribution limit is much higher. Many employers also offer a Roth 401(k), which is funded with after-tax dollars like a Roth IRA. This is general information, not financial advice.",
+  "expect": {
+    "facts": [{"text": "after-tax"}, {"text": "tax-free"}],
+    "forbid": ["http"],
+    "sources": ["https://www.irs.gov/retirement-plans/roth-comparison-chart"]
+  }
+}

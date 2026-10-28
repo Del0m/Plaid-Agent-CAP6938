@@ -13,9 +13,10 @@ def add_user(s, user_id, email):
     return item
 
 
-def add_account(s, item, name, type_="depository", balance=10000, mask=None, plaid_id=None, liability=None):
+def add_account(s, item, name, type_="depository", balance=10000, mask=None, plaid_id=None, liability=None,
+                subtype=None):
     acct = Account(user_id=item.user_id, item_id=item.id, plaid_account_id=plaid_id or f"acc-{item.id}-{name}",
-                   name=name, mask=mask, type=type_, current_balance_cents=balance)
+                   name=name, mask=mask, type=type_, subtype=subtype, current_balance_cents=balance)
     s.add(acct)
     s.flush()
     if liability:

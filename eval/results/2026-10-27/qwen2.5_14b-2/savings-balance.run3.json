@@ -1,0 +1,64 @@
+{
+  "record": {
+    "scenario_id": "savings-balance",
+    "run": 3,
+    "answer": "You have $8,420.55 in your High Yield Savings account.\n\nThis is general information, not financial advice.",
+    "tool_calls": [
+      {
+        "name": "get_accounts",
+        "args": {}
+      }
+    ],
+    "tool_results": [
+      "{\"user\":\"user_816f\",\"purpose\":\"accounts\",\"data\":[{\"name\":\"Everyday Checking\",\"type\":\"depository\",\"subtype\":\"checking\",\"balance\":1310.0,\"available\":null,\"limit\":null},{\"name\":\"High Yield Savings\",\"type\":\"depository\",\"subtype\":\"savings\",\"balance\":8420.55,\"available\":null,\"limit\":null}]}"
+    ],
+    "sources": [
+      {
+        "title": "Budgeting basics: The 50-30-20 rule",
+        "section": "Savings: 20%",
+        "source_url": "https://www.unfcu.org/guides/the-50-30-20-rule",
+        "text": "The remaining 20% of your budget should go toward the future. You may put money in an emergency fund, contribute to a retirement account, or save toward a down payment on a home. Paying down debt beyond the minimum payment amount belongs in this category, too."
+      },
+      {
+        "title": "Budgeting basics: The 50-30-20 rule",
+        "section": "In summary",
+        "source_url": "https://www.unfcu.org/guides/the-50-30-20-rule",
+        "text": "Options to save for the future at UNFCU include savings accounts and share certificates.\n\nThe 50-30-20 rule is just one way to consider organizing your budget. To find the perfect fit for your situation, consult a professional financial planner."
+      },
+      {
+        "title": "An essential guide to building an emergency fund | Consumer Financial Protection Bureau",
+        "section": "How much do I need in it?",
+        "source_url": "https://www.consumerfinance.gov/an-essential-guide-to-building-an-emergency-fund/",
+        "text": "The amount you need to have in an emergency savings fund depends on your situation. Think about the most common kind of unexpected expenses you’ve had in the past and how much they cost. This may help you set a goal for how much you want to have set aside.\n\nIf you’re living paycheck to paycheck or don’t get paid the same amount each week or month, putting any money aside can feel difficult. But, even a small amount can provide some financial security.\n\nKeep reading to find the savings strategy, or strategies, that work best for you."
+      },
+      {
+        "title": "Budgeting basics: The 50-30-20 rule",
+        "section": "Getting started",
+        "source_url": "https://www.unfcu.org/guides/the-50-30-20-rule",
+        "text": "Start by taking a look at your paycheck. If taxes are withheld, subtract that amount from your total earnings. Do not subtract other amounts that may be withheld or automatically deducted, like health insurance or retirement contributions. Those will become part of your budget.\n\nThe 50-30-20 rule recommends putting 50% of your money toward needs, 30% toward wants, and 20% toward savings. The savings category also includes money you will need to realize your future goals. Let’s take a closer look at each category."
+      }
+    ],
+    "latency_s": 8.625499000074342,
+    "error": null
+  },
+  "scores": {
+    "facts": {
+      "found": 1,
+      "total": 1,
+      "missing": [],
+      "forbidden_hits": [],
+      "passed": true,
+      "score": 1.0
+    },
+    "tools_ok": true,
+    "sources_ok": true,
+    "similarity": 0.9956991728413066,
+    "judge": {
+      "coherent": 5,
+      "consistent_with_data": 5,
+      "safe": 5,
+      "reason": "The answer directly and accurately reflects the provided data regarding the user's savings account balance."
+    },
+    "judge_passed": true
+  }
+}

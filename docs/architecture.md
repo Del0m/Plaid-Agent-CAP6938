@@ -58,7 +58,7 @@ java -jar plantuml.jar -tsvg docs/diagrams/*.puml
 | Frontend | **Next.js (React, TypeScript)** + Tailwind + Recharts | Plaid ships `react-plaid-link`; Recharts covers balance and budget-pace charts | Vite + React, SvelteKit |
 | Backend API | **FastAPI (Python 3.12)** (decided) | LangGraph, ChromaDB and the Plaid Python SDK are all Python, so one language for backend and agents | Node/Express (then agents become a separate service) |
 | Agents | **LangGraph** | Explicit state graphs, checkpointing, `interrupt()` for human approval | Plain tool-use loop, CrewAI |
-| LLM | **Local Llama via Ollama** (`langchain-ollama` `ChatOllama`), behind a single `llm.py` wrapper. Chat agent model: **`qwen2.5:14b`** (since 2026-10-26; `llama3.1:8b` and `mistral` as benchmark comparisons). Judge model for evals: a different model from the agent, chosen in TPC-16. Runs on a MacBook Pro M5, 24 GB (70B models don't fit) | Financial data never leaves your machine; free to run thousands of eval calls; wrapper still lets you swap models for benchmarking | A hosted API (Claude, OpenAI) as a comparison baseline |
+| LLM | **Local Llama via Ollama** (`langchain-ollama` `ChatOllama`), behind a single `llm.py` wrapper. Chat agent model: **`qwen2.5:14b`** (since 2026-10-26; `llama3.1:8b` and `mistral` as benchmark comparisons). Judge model for evals: **`gemma3:12b`** (TPC-16), from a different family than every agent model. Runs on a MacBook Pro M5, 24 GB (70B models don't fit) | Financial data never leaves your machine; free to run thousands of eval calls; wrapper still lets you swap models for benchmarking | A hosted API (Claude, OpenAI) as a comparison baseline |
 | Embeddings | **`nomic-embed-text` via Ollama** (decided 2026-10-26), behind `get_embeddings()` in `llm.py` | 8192-token context fits ~500-token chunks; runs on the Ollama server the agent already uses; nothing leaves your machine; same model can score semantic similarity in evals | `all-MiniLM-L6-v2` (Chroma's default, but truncates at 256 word-pieces), `bge-small-en-v1.5` |
 | Vector store | **ChromaDB** (persistent client, local dir) | Required by the proposal; zero ops | pgvector |
 | App DB | **SQLite** in dev, **PostgreSQL** later, via **SQLAlchemy 2 + Alembic** | Start simple; migrations keep the schema honest | Supabase |
@@ -370,6 +370,12 @@ POST /admin/sandbox/advance     (dev only: inject sandbox transactions, see 12)
 
 Build the harness **early** (alongside Milestone 2), even with only two scenarios. It's much easier to grow than to retrofit.
 
+**As built (TPC-16):**
+- **Running it:** `venv/bin/python eval/run_eval.py [--model] [--runs 3] [--only <id>] [--judge gemma3:12b]`. How to run it and how to add a scenario are in [`eval/README.md`](../eval/README.md).
+- **Scenarios:** each scenario in `eval/scenarios/<id>.json` has a synthetic user (accounts and liabilities in dollars, transactions with `days_ago`), a question, a golden answer, and `expect`: required facts, forbidden strings, expected tools and expected sources.
+- **What a run does:** the harness seeds the user into a throwaway in-memory database. It runs the same graph and tools `POST /chat` builds, scores the answer, and writes one JSON file per run as it finishes.
+- **Results:** `summary.json` and `config.json` go to `eval/results/<date>/<model>/`. A second run on the same day gets a `-2` folder instead of overwriting.
+
 ### 10.1 Test data
 - **Synthetic users:** JSON fixtures of accounts, liabilities and ~6 months of transactions with known ground truth (e.g., "Dining spend jumps 40% in month 5 because of a recurring new subscription"). Load them straight into the DB, bypassing Plaid, so tests are fast and deterministic.
 - **Plaid Sandbox users:** `user_transactions_dynamic` and custom sandbox users for end-to-end runs.
@@ -378,9 +384,9 @@ Build the harness **early** (alongside Milestone 2), even with only two scenario
 
 | Metric | How | Target |
 |---|---|---|
-| Golden-answer match | Each scenario has a golden action (e.g. "pay the 24% APR card first"). LLM judge or rule check: does the answer contain it? | report % |
-| Semantic similarity | Cosine similarity between agent answer and golden answer embeddings | **≥ 0.85** (decided; note in the report that the proposal said 0.90) |
-| Coherence / safety | LLM-as-judge rubric (coherent, consistent with the user's numbers, not unsafe) on a 1-5 scale, plus a few human spot checks | proposal: **85%** pass |
+| Golden-answer match | Rule check (TPC-16). Every listed fact must appear in the answer: text case-insensitively, numbers within a tolerance after stripping `$`, `%` and commas (`3.2k` and `401(k)` never count). No forbidden string (e.g. `http`) may appear. Tool choice and retrieved sources are reported alongside | report % |
+| Semantic similarity | Cosine similarity of `nomic-embed-text` embeddings of the answer and the golden answer, both with the `clustering: ` prefix | **≥ 0.85** (decided; note in the report that the proposal said 0.90) |
+| Coherence / safety | `gemma3:12b` judge at temperature 0. It sees the question, the tool results and the answer, and scores `coherent`, `consistent_with_data` and `safe` from 1 to 5. A run passes if all three are ≥ 4; unparseable twice counts as a fail. Plus a few human spot checks | proposal: **85%** pass |
 | Specificity | Rubric or classifier: does advice name a concrete vehicle/action (Roth IRA, HYSA, specific subscription)? | report % |
 | Initial budget accuracy | MAPE between initial budget and next month's actual per category | lower is better |
 | Time-to-flag | Days between a scenario's overspend crossing 10% and the alert being created | ≤ 1 run |
@@ -393,7 +399,7 @@ Build the harness **early** (alongside Milestone 2), even with only two scenario
 
 ### 10.3 Tips
 - Fix the LLM `temperature` (e.g. 0) during evals and run each scenario 3 times; report mean and spread.
-- Don't use the same model as both agent and judge if you can avoid it, or at least report that you did. The chat agent is now `qwen2.5:14b`, the model first planned as judge, so TPC-16 must pick a different judge (e.g. `llama3.1:8b` or `mistral`) and report the choice.
+- Don't use the same model as both agent and judge if you can avoid it, or at least report that you did. The chat agent is now `qwen2.5:14b`, the model first planned as judge, so TPC-16 chose `gemma3:12b`. It comes from a fourth model family, so it isn't one of the three agent models being compared.
 - Track latency too: a local model's speed per agent run is a real result worth reporting.
 - Save every run's outputs as JSON in `eval/results/<date>/` so you can chart progress in the final report.
 
@@ -576,6 +582,9 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-27 | Add recurring-charge detection, a cash-flow forecast and a debt-payoff planner (section 6a) to the daily agent and the Goal Agent | The project's agentic scope should cover the user's whole financial picture, not just budgets; all three reuse the budget agent's pattern (pure function + LLM explanation + `pending_user` alerts) and give exact or measurable benchmark answers |
 | 2026-10-27 | Recurring streams come from our own detector over `transactions`; Plaid's `/transactions/recurring/get` is only a Sandbox cross-check | Synthetic eval users never touch Plaid; a pure function is unit-testable; Plaid's endpoint is a paid add-on outside Sandbox |
 | 2026-10-27 | `days_requested` raised from 90 to 180 | Monthly streams need several occurrences to be detected reliably |
+| 2026-10-27 | Eval judge is `gemma3:12b` (Ollama, temperature 0) | `qwen2.5:14b` became the chat model, and `llama3.1:8b` and `mistral` are the comparison agents. A fourth family grades all three without grading itself; ~8 GB fits next to qwen in 24 GB and stays local |
+| 2026-10-27 | Golden-answer match is a rule check on listed facts, not an LLM verdict | Deterministic and free; a wrong number fails loudly. The judge covers how the answer reads |
+| 2026-10-27 | The eval harness runs in-process (the same graph and tools as `POST /chat`, one throwaway DB per run), not through the HTTP API | Synthetic users are possible (the API only knows the dev user and `dev.db`), there's no server to manage, and it tests the real agent code |
 | | | |
 
 ---
