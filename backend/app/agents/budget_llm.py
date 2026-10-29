@@ -11,13 +11,15 @@ from pydantic import BaseModel, Field, ValidationError
 
 DIAGNOSE_PROMPT = (
     "You review one overspent budget category for a personal finance app. The facts below were computed "
-    "from the user's transactions. Classify the cause as exactly one of:\n"
-    "- one_time: one purchase, or a short burst, at merchants not seen in earlier months "
-    "(months_seen_before is 0), that explains most of the spending (a high share_of_spent).\n"
-    "- recurring: a charge that repeats every month at about the same amount and is new or larger since the "
-    "budget was set (months_seen_before of 1 or 2, a typical amount close to this month's).\n"
-    "- seasonal: spending tied to the time of year, such as holidays, back-to-school or summer travel, "
-    "spread across several purchases with no single one dominating. Use the month.\n"
+    "from the user's transactions. Classify the cause as exactly one of these, checking them in this order:\n"
+    "1. recurring: a merchant that started recently and now charges every month: months_seen_before is 1 or 2 "
+    "and this_month is about its typical amount. A merchant with months_seen_before of 1 or more is NOT new, "
+    "even if this month's charge is large.\n"
+    "2. one_time: otherwise, one purchase at a merchant never seen before (months_seen_before is 0) that "
+    "explains most of the spending (share_of_spent above 0.5).\n"
+    "3. seasonal: otherwise, spending spread across several purchases with no single one dominating, in a "
+    "month with typical seasonal spending (holidays in November and December, back-to-school in August and "
+    "September, summer travel). Use the month.\n"
     "Use only the facts given and quote numbers exactly as they appear. Answer in JSON with cause and a "
     "one-sentence evidence."
 )
