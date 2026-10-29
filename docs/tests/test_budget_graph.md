@@ -31,6 +31,12 @@ Run them from `backend/`:
 
 **Why it's there:** It's the whole graph working end to end on the done-when's user, with a scripted model.
 
+## `test_advice_links_alert`
+
+**What it does:** The advice row a run writes carries the id of the alert it became.
+
+**Why it's there:** When the user accepts or dismisses that alert (TPC-20), the decision is written back to this advice row as its outcome. The agent's memory then shows what the user did with it.
+
 ## `test_second_run_reuses_budget_and_alerts_again`
 
 **What it does:** Two runs on the same day share one budget period, write two alerts and record two runs.

@@ -172,9 +172,9 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
                               cause=d["cause"] if d else None, action=act["action"], message=act["message"],
                               proposed_limit_cents=act["proposed_limit_cents"], status="pending_user")
                 s.add(alert)
-                s.add(AdviceLog(user_id=state["user_id"], run_id=state["run_id"], category=cat,
+                s.flush()       # the advice row needs the alert's id
+                s.add(AdviceLog(user_id=state["user_id"], run_id=state["run_id"], alert_id=alert.id, category=cat,
                                 advice_text=act["message"]))
-                s.flush()
                 ids.append(alert.id)
             s.commit()
         return {"alert_ids": ids}

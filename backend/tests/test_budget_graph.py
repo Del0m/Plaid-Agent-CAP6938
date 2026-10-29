@@ -61,6 +61,13 @@ def test_full_run_one_time(db, tmp_path):
     assert gm_line.spent_cents > 60000 and gm_line.last_pace is not None
 
 
+def test_advice_links_alert(db, tmp_path):
+    uid = seed(db, "overspend-one-time")
+    run(db, uid, model=fake(DIAG, ALERT), tmp_path=tmp_path)
+    [alert], [advice] = rows(db, Alert), rows(db, AdviceLog)
+    assert advice.alert_id == alert.id
+
+
 def test_second_run_reuses_budget_and_alerts_again(db, tmp_path):
     uid = seed(db, "overspend-one-time")
     run(db, uid, model=fake(DIAG, ALERT, DIAG, ALERT), tmp_path=tmp_path)
