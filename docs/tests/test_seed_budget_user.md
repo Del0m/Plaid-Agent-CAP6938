@@ -43,3 +43,9 @@ Run them from `backend/`:
 ## Not covered
 
 - **Foreign-key order on `--replace`:** the test database doesn't enforce foreign keys, so the delete order is checked on `dev.db`, where they're on, by the demo run (plan Task 9).
+
+## `test_seed_start_default`
+
+**What it does:** `--start default` seeds the one-time user as simulated at Sep 30, and prints the `simulate.py` command for 30 days.
+
+**Why it's there:** It's the first step of the "simulate a month" demo (TPC-21), so the printed command has to be the next step.

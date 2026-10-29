@@ -5,11 +5,12 @@ overspends (one per cause). The user is `budget-<profile>`; the script prints th
 runs the budget agent on it, on the profile's run date.
 
 Run from backend/:
-    ../venv/bin/python scripts/seed_budget_user.py --profile overspend-one-time [--replace]
+    ../venv/bin/python scripts/seed_budget_user.py --profile overspend-one-time [--replace] [--start default]
 """
 import argparse
 import os
 import sys
+from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
@@ -27,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import (Account, AdviceLog, AgentRun, Alert, BudgetLine, BudgetPeriod, Liability, PlaidItem,
                            Transaction, User)
-from eval.budget_users import PLANTED, PROFILES, seed_profile
+from eval.budget_users import PLANTED, PROFILES, default_start, seed_profile
 
 
 # everything the user owns, children before parents so foreign keys hold
@@ -47,6 +48,7 @@ def main(argv=None, session_factory=None) -> int:
     parser = argparse.ArgumentParser(description="Seed a synthetic budget user into dev.db.")
     parser.add_argument("--profile", required=True)
     parser.add_argument("--replace", action="store_true", help="delete the user and everything it owns first")
+    parser.add_argument("--start", help="YYYY-MM-DD or 'default': seed history only up to this day and simulate from it")
     args = parser.parse_args(argv)
     profiles = {p.id: p for p in PROFILES + PLANTED}
     profile = profiles.get(args.profile)
@@ -63,10 +65,16 @@ def main(argv=None, session_factory=None) -> int:
                 print(f"{user_id} already exists; pass --replace to delete it and seed it again")
                 return 1
             delete_user(s, user_id)
-        seed_profile(s, profile)
-    run_date = profile.run_date or profile.today
+        start = None
+        if args.start:
+            start = default_start(profile) if args.start == "default" else date.fromisoformat(args.start)
+        seed_profile(s, profile, until=start)
     print(f"seeded {user_id}: {profile.description}")
-    print(f"run it: python -m app.agents.budget_graph --user {user_id} --date {run_date} --no-sync")
+    if start is not None:
+        print(f"simulated from {start}; advance it: python scripts/simulate.py --user {user_id} --days 30")
+    else:
+        run_date = profile.run_date or profile.today
+        print(f"run it: python -m app.agents.budget_graph --user {user_id} --date {run_date} --no-sync")
     return 0
 
 

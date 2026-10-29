@@ -49,3 +49,11 @@ def test_replace_deletes_and_reseeds(db, tmp_path):
 def test_unknown_profile(db, capsys):
     assert main(["--profile", "nope"], session_factory=db) == 2
     assert "overspend-one-time" in capsys.readouterr().out
+
+
+
+def test_seed_start_default(db, capsys):
+    assert main(["--profile", PID, "--start", "default"], session_factory=db) == 0
+    with db() as s:
+        assert s.get(User, UID).prefs_json["sim"] == {"profile": PID, "date": "2026-09-30"}
+    assert f"python scripts/simulate.py --user {UID} --days 30" in capsys.readouterr().out
