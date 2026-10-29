@@ -48,3 +48,16 @@ DEV_USER_EMAIL = os.getenv("DEV_USER_EMAIL", "dev@localhost")
 
 # langgraph checkpointer for budget runs waiting on the user's approval (git-ignored by *.db)
 BUDGET_CHECKPOINT_PATH = Path(os.getenv("BUDGET_CHECKPOINT_PATH") or Path(__file__).parent.parent / "data" / "budget_checkpoints.db")
+
+
+def _flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes")
+
+
+# the agent's own schedule (tpc-21): off unless asked for, so dev servers and tests never run it by surprise
+ENABLE_SCHEDULER = _flag("ENABLE_SCHEDULER")
+DAILY_RUN_TIME = os.getenv("DAILY_RUN_TIME", "06:00")
+CLOSE_RUN_TIME = os.getenv("CLOSE_RUN_TIME", "05:00")       # on the 1st, before that day's budget run
+SCHEDULER_TZ = os.getenv("SCHEDULER_TZ", "America/New_York")
+# /admin routes (advancing simulated users); never on for real use
+ENABLE_ADMIN = _flag("ENABLE_ADMIN")
