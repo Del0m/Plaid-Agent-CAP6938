@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AlertCard from "@/components/AlertCard";
 import {
-  acceptAlert, dismissAlert, errorMessage, getAlerts, getRun, runBudget, type Alert, type RunStatus,
+  acceptAlert, advanceSim, dismissAlert, errorMessage, getAlerts, getRun, getSim, getSimJob, runBudget, type Alert,
+  type RunStatus, type SimJob, type SimState,
 } from "@/lib/api";
+import { daysToMonthEnd, formatDate } from "@/lib/format";
 
 // a run can outlast the proxy's 30 s, so it runs in the background and the page asks how it's going
 const POLL_MS = 2000;
@@ -29,6 +31,12 @@ function resultLine(run: RunStatus): string {
   }
 }
 
+function simLine(job: SimJob): string {
+  if (job.status === "error") return `The simulation stopped on ${formatDate(job.date)} (${job.error}).`;
+  return `Advanced ${plural(job.days_done, "day")} to ${formatDate(job.date)}: ${plural(job.run_ids.length, "run")}, ` +
+    `${plural(job.alerts_written, "alert")} written.`;
+}
+
 export default function AlertsPage() {
   const [alerts, setAlerts] = useState<Alert[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +45,10 @@ export default function AlertsPage() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [deciding, setDeciding] = useState<number | null>(null);
+  // simulated users only (admin on): the simulated date, and an advance job's progress or result
+  const [sim, setSim] = useState<SimState | null>(null);
+  const [simulating, setSimulating] = useState(false);
+  const [simResult, setSimResult] = useState<string | null>(null);
   // bumping this re-runs the fetch effect below
   const [reloadKey, setReloadKey] = useState(0);
   const load = useCallback(() => setReloadKey((k) => k + 1), []);
@@ -58,6 +70,9 @@ export default function AlertsPage() {
         setError(null);
       })
       .catch((err) => !cancelled && setError(errorMessage(err)));
+    getSim()
+      .then((s) => !cancelled && setSim(s))
+      .catch(() => !cancelled && setSim(null)); // 404: admin off, no panel
     return () => {
       cancelled = true;
     };
@@ -85,6 +100,29 @@ export default function AlertsPage() {
       setResult(errorMessage(err));
     } finally {
       setRunning(false);
+      load();
+    }
+  }
+
+  async function advance(days: number) {
+    setSimulating(true);
+    setSimResult(null);
+    try {
+      const { job_id } = await advanceSim(days);
+      let job: SimJob | null = null;
+      for (let i = 0; i < MAX_POLLS && mounted.current; i++) {
+        await sleep(POLL_MS);
+        if (!mounted.current) return;
+        job = await getSimJob(job_id);
+        if (job.status !== "running") break;
+        setSimResult(`Day ${job.days_done} of ${job.days_requested}…`);
+      }
+      if (!mounted.current) return;
+      setSimResult(job && job.status !== "running" ? simLine(job) : "Still running. Check back later.");
+    } catch (err) {
+      setSimResult(errorMessage(err));
+    } finally {
+      setSimulating(false);
       load();
     }
   }
@@ -124,12 +162,32 @@ export default function AlertsPage() {
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
             className="rounded-md border border-black/10 px-2 py-1 dark:border-white/15" />
         </label>
-        <button type="button" onClick={run} disabled={running}
+        <button type="button" onClick={run} disabled={running || simulating}
           className="rounded-md bg-black px-3 py-1.5 text-sm text-white disabled:opacity-50 dark:bg-white dark:text-black">
           {running ? "Running…" : "Run budget check"}
         </button>
         {result && <p role="status" className="text-sm">{result}</p>}
       </section>
+
+      {sim?.simulated && sim.date && (
+        <section aria-label="Simulation"
+          className="flex flex-col gap-3 rounded-lg border border-dashed border-black/20 p-4 dark:border-white/25">
+          <p className="text-sm">Simulated date: {formatDate(sim.date)}</p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { label: "Advance 1 day", days: 1 },
+              { label: "Advance 7 days", days: 7 },
+              { label: "To month end", days: daysToMonthEnd(sim.date) },
+            ].map((b) => (
+              <button key={b.label} type="button" onClick={() => advance(b.days)} disabled={running || simulating}
+                className="rounded-md border border-black/10 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-white/15">
+                {b.label}
+              </button>
+            ))}
+          </div>
+          {simResult && <p role="status" className="text-sm">{simResult}</p>}
+        </section>
+      )}
 
       {error && (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">

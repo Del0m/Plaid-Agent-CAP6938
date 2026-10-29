@@ -168,6 +168,35 @@ export function dismissAlert(id: number): Promise<Alert> {
   return request<Alert>(`/alerts/${id}/dismiss`, { method: "POST" });
 }
 
+// simulated users (tpc-21, admin only): a synthetic user's simulated date, and jobs that advance it
+
+export type SimState = { simulated: boolean; profile: string | null; date: string | null };
+
+export type SimJob = {
+  job_id: number;
+  status: "running" | "ok" | "error";
+  days_requested: number;
+  days_done: number;
+  start_date: string | null;
+  date: string | null;
+  run_ids: number[];
+  alerts_written: number;
+  error: string | null;
+};
+
+// 404 when the server's admin routes are off; the alerts page then shows no simulation panel
+export function getSim(): Promise<SimState> {
+  return request<SimState>("/admin/sandbox");
+}
+
+export function advanceSim(days: number): Promise<{ job_id: number }> {
+  return request("/admin/sandbox/advance", { method: "POST", body: JSON.stringify({ days }) });
+}
+
+export function getSimJob(jobId: number): Promise<SimJob> {
+  return request<SimJob>(`/admin/sandbox/advance/${jobId}`);
+}
+
 export type ChatSource = { title: string; section: string; url: string };
 export type ChatTool = { name: string; args: Record<string, unknown>; ok: boolean };
 

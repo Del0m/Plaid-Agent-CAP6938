@@ -71,3 +71,16 @@ npm test -- lib/api.test.ts
 
 **Why it's there:** The Alerts page shows the server's message when a run is already going, not "Request failed (409)".
 
+## Simulation calls (TPC-21)
+
+## `hit the admin routes`
+
+**What it does:** `getSim()` reads `GET /api/admin/sandbox`, `advanceSim(7)` posts `{"days":7}` to `/api/admin/sandbox/advance`, and `getSimJob(5)` reads `/api/admin/sandbox/advance/5`.
+
+**Why it's there:** These are the routes and body the admin API expects.
+
+## `days to month end`
+
+**What it does:** Oct 3 is 28 days from October's end. Oct 31 and Feb 28 2028 (a leap year) both give 1, never 0.
+
+**Why it's there:** "To month end" on the last day must still advance one day, because the API rejects 0 (plan Review Focus 3).

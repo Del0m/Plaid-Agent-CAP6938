@@ -4,6 +4,7 @@ These tests cover the Alerts page, `app/alerts/page.tsx` (TPC-20):
 - **The run button.** "Run budget check" starts a budget run with an optional date (blank means today), then asks `GET /budget/runs/{id}` every 2 seconds until it's done. It says what happened: alerts written, waiting for approval, no budget, or failed.
 - **The alert lists.** Pending alerts have Accept and Dismiss; decided alerts are listed under History.
 - **Reloading.** The list reloads after every run and decision.
+- **Simulation (TPC-21).** For a simulated user, with admin on, a panel shows the simulated date. It has **Advance 1 day**, **Advance 7 days** and **To month end** buttons, polls the job, and shows progress and then the result.
 
 Run them from `frontend/`:
 
@@ -19,6 +20,7 @@ npm test -- app/alerts/page.test.tsx
 - **`run(over)`** builds a run status.
 - **`runThrough(...statuses)`** clicks Run and advances 2 seconds per scripted status.
 - The default alert list is alert 2 (pending) and alert 1 (accepted).
+- `getSim` answers `404` by default (admin off). Simulation tests set it to `SIMULATED` (the one-time user at Oct 3), and `job(over)` builds a job status.
 
 ---
 
@@ -79,3 +81,45 @@ npm test -- app/alerts/page.test.tsx
 ## Not covered
 
 - **The dashboard's Budget card and Alerts link** have no component test. They reuse `BudgetPaceBar` (tested) and the API calls (tested), and `npm run build` checks the page compiles and prerenders.
+
+## `no panel when admin is off`
+
+**What it does:** When `GET /admin/sandbox` answers `404`, no simulation panel appears.
+
+**Why it's there:** A normal deployment has admin off, and the page must look the same as before TPC-21.
+
+## `no panel for a real user`
+
+**What it does:** For a user who isn't simulated, no panel appears.
+
+**Why it's there:** Real users live on real time, and can't be advanced.
+
+## `advance 7 days polls and reloads`
+
+**What it does:** The panel shows "Simulated date: Oct 3, 2026". **Advance 7 days** posts 7, shows "Day 3 of 7…" while the job runs, then "Advanced 7 days to Oct 10, 2026: 7 runs, 1 alert written.", and reloads the alerts and the simulated date.
+
+**Why it's there:** It's the dashboard way to drive a simulation and watch the agent's alerts appear day by day.
+
+## `simulation error shows where it stopped`
+
+**What it does:** A job that ends in error shows "The simulation stopped on Oct 5, 2026 (ConnectionError).".
+
+**Why it's there:** The user can fix the cause (start Ollama) and advance again from that day.
+
+## `simulation 409 shows message`
+
+**What it does:** When a run or simulation is already going, the panel shows the server's message.
+
+**Why it's there:** A double click, or the morning job, explains itself instead of failing silently.
+
+## `run button disabled while simulating`
+
+**What it does:** While a simulation runs, the run button is disabled.
+
+**Why it's there:** The server would refuse it anyway (one lock per user), and the page shouldn't offer it.
+
+## `month end on the last day advances one`
+
+**What it does:** On Oct 31, **To month end** advances 1 day.
+
+**Why it's there:** It never sends 0, which the API rejects (plan Review Focus 3).

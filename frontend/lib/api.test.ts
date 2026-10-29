@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
-  acceptAlert, ApiError, dismissAlert, errorMessage, getAlerts, getBudget, getChatHistory, getRun, runBudget, streamChat,
-  type ChatEvent,
+  acceptAlert, advanceSim, ApiError, dismissAlert, errorMessage, getAlerts, getBudget, getChatHistory, getRun, getSim,
+  getSimJob, runBudget, streamChat, type ChatEvent,
 } from "@/lib/api";
+import { daysToMonthEnd } from "@/lib/format";
 
 // a fetch response whose body arrives in the given byte chunks
 function streamed(chunks: Uint8Array[], status = 200) {
@@ -110,5 +111,26 @@ describe("budget and alerts calls", () => {
     const err = await runBudget().catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect(errorMessage(err)).toBe("A budget run is already in progress.");
+  });
+});
+
+describe("simulation calls", () => {
+  test("hit the admin routes", async () => {
+    const f = vi.fn().mockImplementation(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    await getSim();
+    await advanceSim(7);
+    await getSimJob(5);
+    expect(f.mock.calls.map(([url, init]) => [url, init?.method ?? "GET", init?.body ?? null])).toEqual([
+      ["/api/admin/sandbox", "GET", null],
+      ["/api/admin/sandbox/advance", "POST", '{"days":7}'],
+      ["/api/admin/sandbox/advance/5", "GET", null],
+    ]);
+  });
+
+  test("days to month end", () => {
+    expect(daysToMonthEnd("2026-10-03")).toBe(28);
+    expect(daysToMonthEnd("2026-10-31")).toBe(1);
+    expect(daysToMonthEnd("2028-02-28")).toBe(1);
   });
 });
