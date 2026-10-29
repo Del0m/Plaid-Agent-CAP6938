@@ -1,5 +1,10 @@
+from datetime import date
+
+from app.budget_engine.fit import fit_budget
+from app.budget_engine.pace import BudgetLine, evaluate
+from app.budget_engine.txns import Txn, month_start
 from app.db.models import Transaction
-from eval.budget_users import PROFILES, seed_profile, transactions
+from eval.budget_users import PLANTED, PROFILES, seed_profile, transactions
 
 
 def profile(pid):
@@ -54,3 +59,48 @@ def test_seed_profile_writes_rows(db):
         uid = seed_profile(s, p)
     with db() as s:
         assert s.query(Transaction).filter_by(user_id=uid).count() == len(transactions(p))
+
+
+# --- planted overspend users (TPC-19) ---
+
+def planted(pid):
+    return next(p for p in PLANTED if p.id == pid)
+
+
+def test_planted_one_time_purchase():
+    assert (date(2026, 10, 12), 60000, "GENERAL_MERCHANDISE", "ElectroMart") in transactions(planted("overspend-one-time"))
+
+
+def test_planted_gym_starts_september():
+    gym = [d for d, _, _, m in transactions(planted("overspend-recurring")) if m == "FitClub Gym"]
+    assert gym == [date(2026, 9, 3), date(2026, 10, 3)]
+
+
+def test_planted_december_shops():
+    dec = {m for d, _, cat, m in transactions(planted("overspend-seasonal"))
+           if d.month == 12 and cat == "GENERAL_MERCHANDISE" and m != "Corner Shop"}
+    assert len(dec) == 8
+
+
+def test_planted_flags_only_the_planted_category():
+    # fit on the three months before run_date, pace on run_date: exactly one flag, the planted one
+    for p in PLANTED:
+        txns = [Txn(d, c, cat, merchant=m) for d, c, cat, m in transactions(p)]
+        start = month_start(p.run_date)
+        fit = fit_budget([t for t in txns if t.date < start], p.run_date)
+        lines = [BudgetLine(ln.category, ln.kind, ln.limit_cents) for ln in fit.lines]
+        flagged = [r.category for r in evaluate(lines, [t for t in txns if t.date <= p.run_date], p.run_date)
+                   if r.flagged]
+        assert flagged == [{"overspend-recurring": "PERSONAL_CARE"}.get(p.id, "GENERAL_MERCHANDISE")], p.id
+
+
+def test_planted_carry_run_date_and_cause():
+    assert {p.id: (p.run_date, p.expected_cause) for p in PLANTED} == {
+        "overspend-one-time": (date(2026, 10, 20), "one_time"),
+        "overspend-recurring": (date(2026, 10, 20), "recurring"),
+        "overspend-seasonal": (date(2026, 12, 15), "seasonal")}
+
+
+def test_profiles_unchanged():
+    assert [p.id for p in PROFILES] == ["steady", "vacation", "early-rent", "rising", "occasional"]
+    assert all(p.run_date is None for p in PROFILES)

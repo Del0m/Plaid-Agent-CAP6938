@@ -2,7 +2,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Union
+from typing import Optional, Union
 
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,7 @@ class Monthly:
     cents: int
     day: int = 1
     moved: dict[date, date] = field(default_factory=dict)    # first of a month -> the day it was actually paid
+    first: Optional[date] = None                             # no charge before this date (a new gym)
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,8 @@ class Profile:
     today: date = date(2026, 8, 1)
     start: date = date(2026, 5, 1)
     end: date = date(2026, 8, 31)
+    run_date: Optional[date] = None        # planted users: the day to run the budget graph
+    expected_cause: Optional[str] = None   # planted users: the cause diagnose should find
 
 
 # (day, cents, category, merchant), sorted; the same profile always gives the same list
@@ -65,7 +68,9 @@ def transactions(profile: Profile) -> list[tuple[date, int, str, str]]:
         elif isinstance(p, Monthly):
             m = month_start(profile.start)
             while m <= profile.end:
-                out.append((p.moved.get(m, m.replace(day=p.day)), p.cents, p.category, p.merchant))
+                day = p.moved.get(m, m.replace(day=p.day))
+                if p.first is None or day >= p.first:
+                    out.append((day, p.cents, p.category, p.merchant))
                 m = add_months(m, 1)
         else:
             d = profile.start
@@ -116,4 +121,30 @@ PROFILES = (
             (RENT, Weekly("FOOD_AND_DRINK", "Grocer", 11000, growth=0.10), *BASE)),
     Profile("occasional", "steady, plus one $300 purchase in June", 5, (RENT, GROCER, *BASE,
             Once("GENERAL_MERCHANDISE", "Shop", 30000, date(2026, 6, 14)))),
+)
+
+# planted overspends for the budget graph (spec: tpc-19), one per cause. a minimal base on purpose: a steady
+# user's monthly streaming charge and weekday counts already raise pace flags of their own (a tpc-17 follow-up),
+# which would add unrelated flags to the demo
+PLANTED_BASE = (RENT, Monthly("INCOME", "Employer", -420000, day=15), Monthly("TRANSFER_OUT", "Savings", 50000, day=16))
+CORNER = Weekly("GENERAL_MERCHANDISE", "Corner Shop", 3500)
+DECEMBER_SHOPS = (("Toy Barn", 1, 6000), ("Gift Gallery", 3, 7500), ("Book Nook", 5, 9000),
+                  ("Game Stop Shop", 7, 12000), ("Candle Co", 9, 6500), ("Sweater Hut", 11, 11000),
+                  ("Craft Corner", 13, 8000), ("Kitchen Plus", 14, 10000))
+
+PLANTED = (
+    Profile("overspend-one-time", "a $600 purchase at a new shop on Oct 12", 11,
+            (*PLANTED_BASE, CORNER, Once("GENERAL_MERCHANDISE", "ElectroMart", 60000, date(2026, 10, 12))),
+            today=date(2026, 10, 1), start=date(2026, 7, 1), end=date(2026, 10, 31),
+            run_date=date(2026, 10, 20), expected_cause="one_time"),
+    Profile("overspend-recurring", "a $90 gym that started Sep 3", 12,
+            (*PLANTED_BASE, Monthly("PERSONAL_CARE", "Barber", 4000, day=20),
+             Monthly("PERSONAL_CARE", "FitClub Gym", 9000, day=3, first=date(2026, 9, 3))),
+            today=date(2026, 10, 1), start=date(2026, 7, 1), end=date(2026, 10, 31),
+            run_date=date(2026, 10, 20), expected_cause="recurring"),
+    Profile("overspend-seasonal", "holiday gifts at eight shops, Dec 1-14", 13,
+            (*PLANTED_BASE, CORNER,
+             *(Once("GENERAL_MERCHANDISE", shop, cents, date(2026, 12, d)) for shop, d, cents in DECEMBER_SHOPS)),
+            today=date(2026, 12, 1), start=date(2026, 9, 1), end=date(2026, 12, 31),
+            run_date=date(2026, 12, 15), expected_cause="seasonal"),
 )
