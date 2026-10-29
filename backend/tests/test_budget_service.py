@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.budget_service import initialize
 from app.budget_service.initialize import initialize_budget, load_txns
-from app.db.models import Account, BudgetLine, BudgetPeriod
+from app.db.models import Account, Alert, BudgetLine, BudgetPeriod
 from tests.factories import add_account, add_txn, add_user
 
 
@@ -44,6 +44,15 @@ def test_period_defaults(db):
         assert p.status == "open" and p.fit_json is None
         assert p.lines[0].spent_cents == 0 and p.lines[0].last_pace is None
 
+
+
+def test_alert_proposed_limit(db):
+    with db() as s:
+        add_user(s, "u1", "u1@x")
+        s.add_all([Alert(user_id="u1", kind="overspend", severity="high", message="m"),
+                   Alert(user_id="u1", kind="overspend", severity="medium", message="m", proposed_limit_cents=16000)])
+        s.commit()
+        assert sorted(a.proposed_limit_cents or 0 for a in s.query(Alert)) == [0, 16000]
 
 # --- initialize_budget ---
 

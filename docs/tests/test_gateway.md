@@ -128,3 +128,37 @@ Getting any of them wrong would give the model a wrong total to reason about.
 
 - **PII the scrub doesn't recognize** in an account or merchant name, such as "Mom" or "Jane Doe Photography". See `test_scrub.md`. The allowlist limits this to those two fields.
 - **Concurrent writes to the audit log.** Appends happen one call at a time. Chat sessions running in parallel (TPC-15) could interleave writes; JSONL lines this short are effectively atomic on macOS, but nothing tests that.
+
+## Purpose `diagnose` (TPC-19)
+
+The budget graph's `diagnose` step asks the LLM why one category is overspent. The gateway builds that prompt from the facts the budget engine computed (`budget_engine/diagnose.py`) and that category's transactions only. Shared setup: `gm(day, cents, merchant, cat)` builds an October 2026 `Txn`. `diagnose_prompt(db, tmp_path, txns)` computes the facts for a general-merchandise flag on day 20 (limit $157.50, history $150 / $148 / $152), seeds the Jane Doe user and returns the gateway and its prompt.
+
+## `test_diagnose_allowlist`
+
+**What it does:** The prompt's data has exactly the `DIAGNOSE_FIELDS` keys. Money is in dollars ($157.50 limit, $635 spent), and the month is named ("October 2026"). The largest purchase carries its share (0.94) and its ratio to the merchant's usual month (none for a new merchant). Each merchant has its `pattern` (`new` here). History months are named oldest first ("July 2026").
+
+**Why it's there:** It's the allowlist rule (architecture section 7): a field added to the facts later can't leak into a prompt by accident. Dollars and month names are what a small model reads correctly.
+
+## `test_diagnose_scrubs_merchants`
+
+**What it does:** A merchant string containing an email address doesn't reach the prompt.
+
+**Why it's there:** Merchant names are the one free-text field the diagnosis needs. They go through the same scrubber as chat spending.
+
+## `test_diagnose_category_only_capped_newest_first`
+
+**What it does:** Of 25 general-merchandise transactions and 3 food ones, the prompt carries 20 general-merchandise ones, newest first, and no food.
+
+**Why it's there:** Minimization per purpose: a diagnosis of one category sees that category only, and a capped list keeps the prompt small.
+
+## `test_diagnose_audited`
+
+**What it does:** The audit log gets a `diagnose` line with the category as its only parameter and the gateway's pseudonym, and the user id appears nowhere in it.
+
+**Why it's there:** Every prompt that leaves the system is recorded for the privacy audit, under the pseudonym only.
+
+## `test_diagnose_unnamed_merchant`
+
+**What it does:** A purchase with no merchant name appears as `"merchant": null` in both the merchants and the transactions.
+
+**Why it's there:** Plaid often has no merchant name. The diagnosis must still be built, not crash in the scrubber.

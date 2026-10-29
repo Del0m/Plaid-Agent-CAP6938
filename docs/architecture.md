@@ -193,6 +193,30 @@ Each node takes the state and returns a partial update. That's the whole LangGra
 
 Use **structured output** (Pydantic models) for `diagnose` and `decide_action` so the graph can branch on the result and the benchmarks can score it.
 
+**As built (TPC-19):** `agents/budget_graph.py`.
+- **Running it:** `run_budget(session_factory, user_id, today)` runs `load_state → sync → categorize → update_totals → detect_overspend → diagnose → decide_action → log_advice → persist_state`. It skips straight to `persist_state` when there is no budget yet (`no_budget`), when today is past the open period (`period_ended`, left for close), or when nothing is flagged.
+- **State:** plain values (ids, ISO dates, dicts), so TPC-20 can add a checkpointer and `interrupt()`.
+- **Diagnosis:** for each flag, `budget_engine/diagnose.py` computes the facts:
+  - the largest purchase and its share;
+  - its ratio to that merchant's usual month;
+  - each top merchant's spend this month, how many of the 3 earlier months it appeared in, with its typical amount, and its `pattern` (`new`, `started_recently` or `regular`);
+  - the history and outlier months from `fit_json`;
+  - the projection and the proposed limit.
+
+  The gateway turns them into the prompt (purpose `diagnose`, section 7). `agents/budget_llm.py` asks for a `Diagnosis {cause, evidence}`, then an `Action {action, message}`.
+- **Structured output:** `invoke_structured` binds Ollama's `format` to the model's JSON schema, validates with Pydantic and retries once. If it still fails, the overspend is still alerted: with no cause, or with a message written by code.
+- **Writing results:** `log_advice` writes an `overspend` alert (`pending_user`, severity `high` over the limit, `medium` on pace) and an `advice_log` row for every action except `no_op`.
+- **`adjust_next_budget`:**
+  - It is allowed only for a **recurring** cause. The code downgrades any other cause's adjust to an `alert` with its own message, and the decide prompt only offers a proposal for a recurring cause.
+  - The alert carries `proposed_limit_cents`, computed by code, never by the model: the old limit plus the typical month of the merchants that started recently (with none, the projection), rounded up to $5. A fixed line's proposal is its actual amount.
+- **`categorize`** only counts uncategorized transactions for now; LLM categorization is a follow-up.
+- **Recording the run:** every run writes an `agent_runs` row (`running` → `ok`/`no_budget`/`period_ended`, or `error` with the exception type). Its summary holds the flags, causes, actions, alert ids, unbudgeted categories, uncategorized count, sync result and LLM failures.
+- **Live result (`qwen2.5:14b`):** the four planted users in `eval/budget_users.py` (`PLANTED`) get the right cause and an allowed action twice in a row:
+  - one-time: `alert`;
+  - recurring: `adjust_next_budget`, proposing $135;
+  - seasonal: `suggest_cuts`;
+  - a $520 one-off at a regular shop: `one_time`, `alert`.
+
 ### 6.3 Initial budget (from ~90 days of history)
 
 When creating the Plaid link token, set `transactions.days_requested` to at least 180: the budget uses the last 90 days, and recurring detection (section 6a.1) needs longer to catch monthly streams reliably.
@@ -221,7 +245,13 @@ flag if spent > limit                          # any category, any day
 
 The `days_elapsed >= 5` guard avoids flagging on day 1 because of one grocery trip. Fixed categories are lumpy (rent lands on the 1st), so judge them only against their limit, not pace. Tune these thresholds with the benchmark, then record the chosen values in the decision log.
 
-This is `budget_engine/pace.py` (`evaluate`). Spending in a category with no budget line is reported to the graph as `unbudgeted` and never flagged; the graph (TPC-19) decides whether to suggest a line.
+This is `budget_engine/pace.py` (`evaluate`). Spending in a category with no budget line is reported to the graph as `unbudgeted` and never flagged. The graph (TPC-19) lists those categories in the run summary and doesn't alert on them; suggesting a new line belongs with period close.
+
+**Known false alarms (found in TPC-19):** pace is unfair to lumpy flexible spending. On Aug 20, a steady synthetic user with no real overspend flags:
+- ENTERTAINMENT at 1.48, because a $15.99 subscription is charged on day 5;
+- TRANSPORTATION at 1.12, because of how many Mondays had passed.
+
+TPC-33 moving subscriptions into the fixed set fixes the first. The thresholds are tuned in M5 against the false-alarm metric.
 
 ### 6.5 Period close and adaptation
 At the end of each calendar month: for each line, compare `limit` vs actual. Apply any `adjust_next_budget` actions the user accepted. For lines without an action, nudge toward actual with smoothing: `new = 0.7 * old + 0.3 * actual`, clamped to ±15% per period. This keeps the budget from chasing one bad month. The "does the budget improve over time" benchmark checks this works.
@@ -342,6 +372,10 @@ Implementation steps:
 
 Because the LLM runs locally (Ollama), prompts never leave your machine, which removes the main leak risk from the proposal. Keep the gateway anyway: it still limits what ends up in logs and traces, it keeps prompts small (which matters a lot for an 8B model's accuracy and speed), and it means a hosted model can be swapped in for comparison without a privacy regression. In the report, say clearly that the privacy guarantee comes from local inference *plus* minimization, and that a hosted model would rely on minimization alone.
 
+**Purpose `diagnose` (TPC-19):** the budget graph's prompt for one flagged category.
+- **What it contains:** the facts `budget_engine/diagnose.py` computed, serialized by an allowlist (`DIAGNOSE_FIELDS`): dollars, month names, the run's pseudonym and scrubbed merchants. It also carries that category's transactions only, newest first, at most 20.
+- **Audit:** it's audited once per flag. The decide call reuses the same context rather than building a second prompt.
+
 **Follow-up:** the gateway's `get_spending` still excludes refunds, while the budget engine nets them (section 6.3). Until `get_spending` nets them too, a chat spending total can differ from the budget's pace for the same category.
 
 ---
@@ -439,7 +473,16 @@ Only in Sandbox. Plaid's Transfer product needs separate approval for production
 ## 12. Development workflow tips
 
 - **Sandbox time travel:** Sandbox won't produce new transactions on its own the way a real bank does. For the daily loop, either call `/sandbox/transactions/create` (for dynamic sandbox users) or load the next day's slice from a synthetic fixture. Wrap both behind `POST /admin/sandbox/advance` so you can simulate a month in a minute.
-- **Run graphs by hand:** every graph should be callable from a CLI (`python -m app.agents.budget --user demo --date 2026-11-03`) before you put it on a schedule.
+- **Run graphs by hand:** every graph should be callable from a CLI before you put it on a schedule. The budget agent (TPC-19):
+
+  ```bash
+  cd backend
+  ../venv/bin/python scripts/seed_budget_user.py --profile overspend-one-time [--replace]   # a planted user in dev.db
+  ../venv/bin/python -m app.agents.budget_graph --user budget-overspend-one-time --date 2026-10-20 --no-sync
+  ```
+
+  - The seed script accepts any profile in `eval/budget_users.py`. It refuses an existing user unless `--replace`, which deletes everything the user owns first.
+  - The CLI prints each line's pace, and each flag's cause, action, message and proposed limit. It exits 1 if the run failed. Leave out `--no-sync` to sync the user's Plaid items first.
 - **Visualize the graph:** `graph.get_graph().draw_mermaid()` prints the LangGraph structure. Compare it to `budget-agent-loop.png`.
 - **Document every test (required):** each pytest module in `backend/tests/` has a Markdown file with the same name in `docs/tests/` (`test_plaid.py` → `docs/tests/test_plaid.md`). Every test function gets an entry saying what it does and why it's there, meaning the bug, requirement or design rule it protects. Put shared fixtures and helpers at the top of the file and known gaps in a "Not covered" section. Update the doc in the same change that adds, removes or changes a test, and don't count a test as done until it has an entry. Run tests from `backend/` with `../venv/bin/python -m pytest`.
 - **LangSmith (optional):** free tier tracing shows each node's inputs/outputs. Very helpful when debugging tool calls. Mind privacy: traces contain prompts.
@@ -563,7 +606,9 @@ Grow scenarios to ~30-50, run the full metric table, chart results, and write up
 | PII leaks to the LLM | Privacy Gateway allowlist + prompt audit log |
 | Forged Plaid webhooks trigger syncs | Verify the `Plaid-Verification` JWT before going beyond Sandbox (TODO in `api/plaid.py`) |
 | Sandbox data too thin to test the loop | Synthetic fixtures with known ground truth |
-| Over-alerting annoys users | `days_elapsed` guard, dedupe via `advice_log`, false-alarm metric |
+| Over-alerting annoys users | `days_elapsed` guard, dedupe via `advice_log` (TPC-20), false-alarm metric. Until TPC-20, a daily run alerts again on the same overspend. Lumpy flexible spending (a subscription early in the month, weekday counts) raises pace false alarms today (section 6.4) |
+| The model's message states a number not in the facts | The prompt says to quote only given numbers. A check that every number in a message appears in the facts is a follow-up, measurable in M5 |
+| Uncategorized transactions | `categorize` only counts them (TPC-19). LLM categorization through a gateway purpose that sends only the scrubbed merchant and amount is a follow-up |
 | Local 8B model fumbles tool calls or JSON | Structured output with Pydantic + retry on parse failure; keep tool count small per graph; test a larger model if needed |
 | Scope creep | Stretch goal stays last; M3 is the core novelty, protect its time. Section 6a's order if time runs short: debt planner, then recurring detection, then the forecast |
 | Forecast looks precise but income is irregular | Always show the low/high band; with no inflow stream, assume no income and say so; the band-coverage metric checks the band is honest |
@@ -614,6 +659,13 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-28 | A fixed line's initial limit is the lower median (`statistics.median_low`) of the months that had the bill (supersedes "latest non-zero month"); close still follows the actual amount | The month rent is paid early holds two rents: `$1,500 / $3,000 / $0` and `$1,500 / $1,500 / $3,000` both fitted at $3,000, 100% off the next month. A plain median from the first paying month still failed on even counts at first link (`$0 / $1,500 / $3,000` → $2,250). The lower median of paying months gives one rent in every case; a rent increase waits one period for close to adopt it |
 | 2026-10-28 | Fit evidence is stored as JSON: `budget_lines.fit_json` (monthly totals, outlier months with their top transactions) and `budget_periods.fit_json` (window, skipped) | The agent explains a budget from what it was actually built from; re-fitting later could drift once transactions change. Nothing needs to query it, so a JSON column beats three tables |
 | 2026-10-28 | Alert `kind`/`cause`/`action`/`status`/`severity` and `advice_log.outcome` are plain strings with `Literal` aliases; small stable sets (period status, line kind, line source) are `Enum`s | Alert kinds and actions keep growing (TPC-31/32/33); a Postgres native enum would need an `ALTER TYPE` migration for each |
+| 2026-10-28 | `diagnose` gets facts computed by code (largest purchase's share, merchants new vs repeating, history, month), and the LLM picks the cause and writes the evidence | A 14B local model classifies unreliably from raw rows. The facts are unit-tested, and the LLM still makes the call (section 6.2) |
+| 2026-10-28 | The proposed limit for `adjust_next_budget` is computed by code (projection rounded up to $5; a fixed line's actual) and stored in `alerts.proposed_limit_cents`; the LLM only picks the action | The LLM never does arithmetic that matters, and TPC-22's close applies exactly what the user accepted |
+| 2026-10-28 | A structured call that fails twice falls back: no cause, or an `alert` with a message written by code | An overspend must never go unreported because the model produced bad JSON |
+| 2026-10-28 | `invoke_structured` binds Ollama's `format` to the JSON schema and validates with Pydantic, instead of `with_structured_output` | Constrained decoding on the real model, the same path with the scripted test model, and the retry controls parsing |
+| 2026-10-28 | The diagnose prompt checks the causes in order (recurring, then one-time, then seasonal) against facts the code names outright: each merchant's `pattern` (`new` / `started_recently` / `regular`) and the largest purchase's ratio to its merchant's usual month | Live, the model read "seen in 1 earlier month" as new and called the gym `one_time`, and a review probe showed a $520 one-off at a regular shop called `recurring`. With the named facts, all four planted users are right, twice in a row |
+| 2026-10-28 | Only a recurring cause may `adjust_next_budget` (a code guard downgrades the rest to an `alert`); a recurring proposal is the old limit plus the new merchants' typical month | Review, reproduced live: holiday shopping got a $1,600 January limit, and the gym got $205 from a straight-line projection of charges that had already posted. Now it's $135 |
+| 2026-10-28 | `categorize` only counts uncategorized transactions in TPC-19; unbudgeted spending is listed, not alerted | Sandbox and synthetic data are always categorized, and nothing in the done-when exercises it. A category with no line isn't overspent against anything |
 | 2026-10-28 | Initial budgets keep the **median** (× 1.05 for flexible lines) | Measured on five synthetic users: pooled MAPE 7.1% (median) vs 17.7% (mean). The mean is 1-2 points better when there's no outlier but 58.8% vs 9.4% with one trip, and it budgets one-off purchases. `eval/results/2026-10-28/budget_accuracy/` |
 | | | |
 

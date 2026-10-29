@@ -41,6 +41,12 @@ Uses the `db` fixture from `conftest.py` (see [test_plaid.md](test_plaid.md#shar
 
 **Why it's there:** These are the states the budget graph (TPC-19) starts from before its first `update_totals`. A period opened by period close has no fit evidence, so `fit_json` must be allowed to be empty.
 
+## `test_alert_proposed_limit`
+
+**What it does:** An alert can be saved without a proposed limit, and with one (16000¢). Both read back correctly.
+
+**Why it's there:** TPC-19 stores the code-computed limit for an `adjust_next_budget` alert here, and TPC-22's close applies exactly that number when the user accepts. Every other alert leaves it empty.
+
 ## `test_initialize_creates_period_and_lines`
 
 **What it does:** With the shared history, `initialize_budget` opens an October period. Read back in a new session, it has three `init` lines: food $472.50 (flexible), rent $1,500 (fixed) and travel $262.50 (flexible). Travel's `fit_json` holds its monthly totals and August as an outlier, with both August purchases as ISO dates and integer cents. The period's `fit_json` lists the three window months.

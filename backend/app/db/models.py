@@ -137,6 +137,7 @@ AlertCause = Literal["one_time", "seasonal", "recurring"]
 AlertAction = Literal["alert", "suggest_cuts", "adjust_next_budget", "suggest_cancel", "move_from_savings",
                       "delay_spend", "extra_payment"]
 AlertStatus = Literal["pending_user", "accepted", "dismissed"]
+AlertSeverity = Literal["medium", "high"]            # pace flag, over its limit
 AdviceOutcome = Literal["accepted", "dismissed", "ignored"]
 
 # something the agent wants the user to see or approve; stream_id arrives with recurring_streams (TPC-33)
@@ -151,6 +152,7 @@ class Alert(Base):
     severity: Mapped[str]
     cause: Mapped[Optional[str]]
     action: Mapped[Optional[str]]
+    proposed_limit_cents: Mapped[Optional[int]]            # set by code for adjust_next_budget; close applies it
     message: Mapped[str]
     status: Mapped[str] = mapped_column(default="pending_user")
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

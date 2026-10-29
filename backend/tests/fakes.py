@@ -23,6 +23,7 @@ class ScriptedChatModel(BaseChatModel):
     replies: list
     seen: list = Field(default_factory=list)      # messages sent, one list per call
     tools_seen: list = Field(default_factory=list)  # tool names bound on each call, None if unbound
+    kwargs_seen: list = Field(default_factory=list)  # every call's kwargs (e.g. a bound ollama `format`)
     gate: Optional[threading.Event] = None         # first reply waits on it (holds a stream open)
     token_delay: float = 0.0                       # pause between streamed words (a slow model mid-answer)
 
@@ -36,6 +37,7 @@ class ScriptedChatModel(BaseChatModel):
     def _next(self, messages, kwargs) -> AIMessage:
         self.seen.append(list(messages))
         self.tools_seen.append(kwargs.get("tools"))
+        self.kwargs_seen.append(dict(kwargs))
         if self.gate is not None and len(self.seen) == 1:
             self.gate.wait(timeout=10)
         reply = self.replies.pop(0)

@@ -10,6 +10,15 @@ These tests cover `eval/budget_users.py`, the synthetic users for the budget acc
 | `rising` | groceries up 10% a month |
 | `occasional` | steady, plus one $300 purchase in June |
 
+`PLANTED` (TPC-19) holds three more users for the budget graph, each with one planted overspend and the cause `diagnose` should find. They use a minimal base (rent, paycheck, savings transfer), so the planted category is the only flag.
+
+| Profile | Planted | Run on | Cause |
+|---|---|---|---|
+| `overspend-one-time` | $600 at ElectroMart on Oct 12, against ~$150/month of general merchandise | Oct 20 | `one_time` |
+| `overspend-recurring` | a $90 gym first charged Sep 3, again Oct 3, against a $40/month barber | Oct 20 | `recurring` |
+| `overspend-seasonal` | eight $60-$120 purchases at eight shops, Dec 1-14 | Dec 15 | `seasonal` |
+| `overspend-known-merchant` | a $520 one-off on Oct 12 at MegaMart, which usually comes to $120 a month | Oct 20 | `one_time` |
+
 Run them from `backend/`:
 
 ```bash
@@ -18,7 +27,7 @@ Run them from `backend/`:
 
 ## Shared setup
 
-- `profile(id)` looks a profile up in `PROFILES`.
+- `profile(id)` looks a profile up in `PROFILES`, and `planted(id)` in `PLANTED`.
 - `test_seed_profile_writes_rows` uses the `db` fixture from `conftest.py`.
 
 ---
@@ -70,3 +79,45 @@ Run them from `backend/`:
 **What it does:** Seeding the steady profile writes one transaction row per generated transaction, readable from a fresh session.
 
 **Why it's there:** The eval runs the real `initialize_budget` on these rows. A dropped row would change the budget without any error.
+
+## `test_planted_one_time_purchase`
+
+**What it does:** The one-time user has a $600 ElectroMart purchase on Oct 12.
+
+**Why it's there:** It's the overspend `diagnose` must call `one_time`. If it moved or shrank, the demo would test something else.
+
+## `test_planted_gym_starts_september`
+
+**What it does:** The gym is charged exactly on Sep 3 and Oct 3, and never before.
+
+**Why it's there:** Starting in the last history month keeps the gym out of the fitted median, so October is over the limit. Starting earlier would leave nothing to flag. It also checks `Monthly(first=...)`.
+
+## `test_planted_december_shops`
+
+**What it does:** The seasonal user has eight different shops in December, besides the usual corner shop.
+
+**Why it's there:** Spread across many shops, no single purchase dominates, and that is what separates `seasonal` from `one_time` in the facts.
+
+## `test_planted_flags_only_the_planted_category`
+
+**What it does:** For each planted user, it fits the three months before the run date and evaluates pace on the run date. Exactly one category is flagged: personal care for the gym, general merchandise for the other two.
+
+**Why it's there:** An unrelated flag would add an alert and LLM calls to the demo. A steady user's streaming charge and weekday counts already raise flags of their own (a TPC-17 follow-up), which is why planted users use a minimal base.
+
+## `test_planted_carry_run_date_and_cause`
+
+**What it does:** Each planted user has its run date and expected cause: Oct 20 for one-time, recurring and known-merchant, and Dec 15 for seasonal.
+
+**Why it's there:** The seed script prints the run command from `run_date`, and the live test checks `diagnose` against `expected_cause`.
+
+## `test_profiles_unchanged`
+
+**What it does:** The accuracy-eval profiles are the same five as before, and none has a run date.
+
+**Why it's there:** The planted users are a separate tuple, so the TPC-18 accuracy results stay comparable.
+
+## `test_planted_known_merchant_big_purchase`
+
+**What it does:** The known-merchant user has its regular $120 MegaMart charge on the 8th of each month, July to October, plus a $520 purchase on Oct 12.
+
+**Why it's there:** It was found in the TPC-19 review: a big one-off at a regular shop was diagnosed `recurring`, which, before the guard, could propose a higher budget for a one-off. The live check now covers it.
