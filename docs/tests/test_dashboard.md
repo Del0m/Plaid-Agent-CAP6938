@@ -12,7 +12,7 @@ The `db` and `client` fixtures from `conftest.py` are described in [`test_plaid.
 
 The test file has these helpers:
 - `dev_user_id(db)` inserts the `dev@localhost` user that `get_current_user` returns, and returns its id. Each request runs as that user, so seeding rows for this id is how a test gives "the current user" data.
-- `seed(db, user_id, accounts, institution=..., email=None, cursor="c-1")` writes one `plaid_items` row and its accounts straight to the database. An account can also carry a `liability`. It returns the account ids in order. Passing `email` creates the user row too, which the "another user" test uses. `cursor=None` marks the item as never synced.
+- `seed(db, user_id, accounts, institution=..., email=None, cursor="c-1", token=None)` writes one `plaid_items` row and its accounts straight to the database. An account can also carry a `liability`. It returns the account ids in order. Passing `email` creates the user row too, which the "another user" test uses. `cursor=None` marks the item as never synced. The item gets a real encrypted token unless `token` is given. Passing `SEED_TOKEN` (`"x"`) makes it look like a seeded user's placeholder item.
 - `acct(...)` and `credit(...)` are small builders for the dicts `seed` takes, so the tests read as data.
 
 ---
@@ -88,6 +88,12 @@ The test file has these helpers:
 **What it does:** Seeds three items: one for the dev user that was never synced (`txn_cursor` is `None`), one for the dev user that was synced, and a never-synced item belonging to another user. It expects `unsynced_items` to list only the dev user's never-synced item, with exactly `id` and `institution_name`.
 
 **Why it's there:** When the first sync fails during linking, the page needs a way to retry. If only the browser remembered the failed sync, a refresh would lose it. The user would see "Connect a bank", link the same bank again, and end up with a duplicate item. Listing never-synced items from the database keeps Retry sync on screen across refreshes. `txn_cursor` is only written once a transactions sync finishes, which is why the endpoint uses it as the marker. The other user's item checks that this third query is scoped to the user too.
+
+## `test_seed_placeholder_item_not_listed_as_unsynced`
+
+**What it does:** Seeds a never-synced item for the dev user whose token is `SEED_TOKEN`, the placeholder that `scripts/seed_budget_user.py` and `tests/factories.add_user` store. It expects `unsynced_items` to be empty.
+
+**Why it's there:** A seeded user's item has no bank behind it and is never synced, so its `txn_cursor` stays `None`. Before this fix, a dev acting as a planted user (`DEV_USER_EMAIL=overspend-…@eval.local`) saw "linked, but loading its data failed" with a Retry sync button, and clicking it returned a 500. The dashboard now leaves placeholder items out, the same way `has_real_plaid_item` and the scheduler already do. Until this fix the `seed` helper also stored `"x"` as every item's token, so it now defaults to a real encrypted token. Otherwise `test_unsynced_items_listed` would have broken for the wrong reason.
 
 ---
 

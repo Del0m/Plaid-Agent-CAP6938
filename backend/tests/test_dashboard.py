@@ -1,7 +1,9 @@
 from datetime import date
 
 from app.api.deps import DEV_USER_EMAIL
+from app.budget_service.alerts import SEED_TOKEN
 from app.db.models import Account, Liability, PlaidItem, User
+from app.security import encrypt
 
 
 # the user every request runs as (see api/deps.py); made here so tests can seed rows for it
@@ -15,14 +17,15 @@ def dev_user_id(db) -> str:
 # one item for user_id with the given accounts, written straight to the db. each account is a dict:
 # {"name", "type", "balance": cents|None, "mask"?, "liability"?: {"kind", "apr", "balance", "min"?, "due"?}}.
 # creates the User row when email is given (for "another user" tests). cursor=None = never synced.
-# returns account ids in order
-def seed(db, user_id, accounts, institution="Test Bank", email=None, cursor="c-1") -> list[int]:
+# token defaults to a real encrypted one; SEED_TOKEN is what seeded users get. returns account ids in order
+def seed(db, user_id, accounts, institution="Test Bank", email=None, cursor="c-1", token=None) -> list[int]:
     ids = []
     with db() as s:
         if email:
             s.add(User(id=user_id, email=email, password_hash="!"))
         item = PlaidItem(user_id=user_id, plaid_item_id=f"item-{user_id}-{institution}",
-                         access_token_enc="x", institution_name=institution, txn_cursor=cursor)
+                         access_token_enc=token or encrypt("access-sandbox-test"),
+                         institution_name=institution, txn_cursor=cursor)
         s.add(item)
         s.flush()
         for i, a in enumerate(accounts):
@@ -209,3 +212,11 @@ def test_unsynced_items_listed(client, db):
 
     assert [i["institution_name"] for i in body["unsynced_items"]] == ["First Platypus Bank"]
     assert set(body["unsynced_items"][0]) == {"id", "institution_name"}
+
+
+# a seeded user's placeholder item has no bank behind it, so it never shows a Retry sync that can't work
+def test_seed_placeholder_item_not_listed_as_unsynced(client, db):
+    uid = dev_user_id(db)
+    seed(db, uid, [], institution="Seeded Bank", cursor=None, token=SEED_TOKEN)
+
+    assert client.get("/dashboard").json()["unsynced_items"] == []

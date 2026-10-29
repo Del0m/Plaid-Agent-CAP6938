@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 
 from app import config
 from app.db.models import Account, Liability, PlaidItem, Transaction, User
+from app.budget_service.alerts import SEED_TOKEN
 from app.plaid_service import client as plaid
 from app.plaid_service.client import PlaidError
 from app.plaid_service.sync import refresh_liabilities, sync_transactions
@@ -59,11 +60,11 @@ def page(added=(), modified=(), removed=(), next_cursor="c-end", has_more=False)
 
 
 # a user with one linked item, written straight to the db (no exchange call)
-def seed_item(db, user_id="u-1", email="sync@test"):
+def seed_item(db, user_id="u-1", email="sync@test", token=None):
     with db() as s:
         s.add(User(id=user_id, email=email, password_hash="!"))
         item = PlaidItem(user_id=user_id, plaid_item_id=f"item-{user_id}",
-                         access_token_enc=encrypt("access-sandbox-test"))
+                         access_token_enc=token or encrypt("access-sandbox-test"))
         s.add(item)
         s.commit()
         return item.id
@@ -248,6 +249,30 @@ def test_sync_route_hides_other_users_items(client, db, fake):
     resp = client.post(f"/plaid/items/{item_id}/sync")
 
     assert resp.status_code == 404
+    assert fake.calls == []
+
+
+# a seeded user's placeholder item is a 409 that says why, and plaid is never called
+def test_sync_route_refuses_seed_placeholder_item(client, db, fake):
+    from app.api.deps import DEV_USER_EMAIL
+    item_id = seed_item(db, email=DEV_USER_EMAIL, token=SEED_TOKEN)
+
+    resp = client.post(f"/plaid/items/{item_id}/sync")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "This is a synthetic user with no bank link to sync."
+    assert fake.calls == []
+
+
+# a stored token that won't decrypt (FERNET_KEY changed, row edited) is a 409 asking for a re-link, not a 500
+def test_sync_route_unreadable_token_is_409(client, db, fake):
+    from app.api.deps import DEV_USER_EMAIL
+    item_id = seed_item(db, email=DEV_USER_EMAIL, token="not-a-fernet-token")
+
+    resp = client.post(f"/plaid/items/{item_id}/sync")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "This bank link can't be read. Link the account again."
     assert fake.calls == []
 
 
