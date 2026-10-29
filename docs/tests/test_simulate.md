@@ -75,3 +75,12 @@ Run them from `backend/`:
 **What it does:** With a job row, its summary shows three days done, the current date and three run ids after three days.
 
 **Why it's there:** The admin API and the Alerts panel report progress ("Day 3 of 7") from this row while the job runs.
+
+## `test_live_simulated_week`
+
+**What it does:** It is skipped unless Ollama is running with `OLLAMA_MODEL`. It simulates the one-time user from Oct 10 to Oct 16 with the real model:
+- seven budget runs happen;
+- no two general-merchandise alerts share a severity;
+- there's an over-limit (`high`) alert from a run on or after Oct 12.
+
+**Why it's there:** It's the simulation with the real agent: data arriving day by day, the memory stopping repeats, and the escalation to over the limit still reported. Live it alerts twice: pace on Oct 10, and over the limit on Oct 12.

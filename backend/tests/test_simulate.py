@@ -133,3 +133,25 @@ def test_job_summary_updates(db):
     with db() as s:
         summary = s.get(AgentRun, job_id).summary_json
     assert (summary["days_done"], summary["date"], len(summary["run_ids"])) == (3, "2026-10-03", 3)
+
+
+from app.agents.llm import get_chat_model
+from app.db.models import AdviceLog, Alert
+from tests.fakes import ollama_has
+
+
+@pytest.mark.skipif(not ollama_has(config.OLLAMA_MODEL), reason="needs ollama running with OLLAMA_MODEL pulled")
+def test_live_simulated_week(db):
+    uid = seed(db, until=date(2026, 10, 9))
+    days = []
+    result = advance_days(db, uid, 7, model=get_chat_model(), checkpointer=None, on_day=days.append)
+    for d in days:
+        print(d)
+    assert len(result["run_ids"]) == 7 and len(runs(db, "budget")) == 7
+    run_date = {d["run_id"]: d["date"] for d in days}
+    with db() as s:
+        alerts = [(a.severity, run_date[adv.run_id]) for a, adv in s.query(Alert, AdviceLog)
+                  .join(AdviceLog, AdviceLog.alert_id == Alert.id).filter(Alert.category == "GENERAL_MERCHANDISE")]
+    severities = [sev for sev, _ in alerts]
+    assert len(severities) == len(set(severities)), alerts          # no repeated alert at the same severity
+    assert any(sev == "high" and when >= "2026-10-12" for sev, when in alerts), alerts

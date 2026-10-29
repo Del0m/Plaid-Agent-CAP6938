@@ -90,3 +90,9 @@ Run them from `backend/`:
 **What it does:** With two earlier alerts this month (medium, then high), the decide prompt says "Earlier alerts for this category this month: 2, highest severity high". With none, it says "none".
 
 **Why it's there:** In live runs, `qwen2.5:14b` alerted again on the same overspend twice when the earlier alerts were only inside the JSON facts. With this one-line summary and the memory rule first in the prompt, it chose `no_op` both times. The model still decides; the code only puts the comparison in front of it.
+
+## `test_decide_messages_flag_escalation`
+
+**What it does:** When the flag is `high` and this month's earlier alerts topped out at `medium`, the summary line adds: "this flag is more severe: the user hasn't been told it is over the limit, so don't choose no_op". When the severity is the same, it doesn't.
+
+**Why it's there:** It was found in the TPC-21 live simulated week. The model warned about pace on Oct 10, then chose `no_op` on Oct 12, when the $600 purchase put the category over its limit, so the user was never told. With the note, both alerts are written and nothing repeats, twice in a row. The model still decides.

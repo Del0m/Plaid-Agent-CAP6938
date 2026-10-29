@@ -74,11 +74,15 @@ def invoke_structured(model: BaseChatModel, schema: type[BaseModel], messages: l
 
 
 # the memory the decide rule turns on, summed up by code so a small model doesn't have to dig it out of the json
-def _earlier(alerts: Sequence[dict]) -> str:
+def _earlier(alerts: Sequence[dict], severity: str) -> str:
     if not alerts:
         return "none"
     top = max((a["severity"] for a in alerts), key=lambda sev: _RANK.get(sev, 0))
-    return f"{len(alerts)}, highest severity {top}"
+    line = f"{len(alerts)}, highest severity {top}"
+    # live, the model let a pace warning stand when the category then went over its limit (tpc-21 simulation)
+    if _RANK.get(severity, 0) > _RANK.get(top, 0):
+        line += " (this flag is more severe: the user hasn't been told it is over the limit, so don't choose no_op)"
+    return line
 
 
 def diagnose_messages(context: str) -> list:
@@ -98,6 +102,6 @@ def decide_messages(context: str, diagnosis: Optional[Diagnosis], projected_cent
         proposal = "none: adjust_next_budget is only for a recurring cause"
     return [SystemMessage(DECIDE_PROMPT), HumanMessage(
         f"Facts:\n{context}\n\nDiagnosis: {cause}\nSeverity of this flag: {severity}\n"
-        f"Earlier alerts for this category this month: {_earlier(earlier)}\n"
+        f"Earlier alerts for this category this month: {_earlier(earlier, severity)}\n"
         f"Projected spending by month end: ${projected_cents / 100:,.2f}\n"
         f"Proposed limit for next month: {proposal}")]
