@@ -65,6 +65,22 @@ DEV_USER_EMAIL=overspend-recurring@eval.local ../venv/bin/uvicorn app.main:app
 
 Then start the web app. On `/alerts`, run a budget check for **2026-10-20**, accept the $135 proposal, and run again: the agent remembers and doesn't alert twice. Other planted users are `overspend-one-time`, `overspend-seasonal` and `overspend-known-merchant`. The same run works from the terminal with `../venv/bin/python -m app.agents.budget_graph --user budget-overspend-recurring --date 2026-10-20 --no-sync`.
 
+## Simulate a month
+
+A synthetic user can live on a simulated date. Each advanced day injects that day's generated transactions and runs the real budget agent, so a planted month can be replayed and watched:
+
+```bash
+cd backend
+../venv/bin/python scripts/seed_budget_user.py --profile overspend-one-time --replace --start default
+../venv/bin/python scripts/simulate.py --user budget-overspend-one-time --days 31
+```
+
+With Ollama running, each flagged day takes a few seconds of model time, so a month takes several minutes. To drive it from the browser, start the API with `ENABLE_ADMIN=1 DEV_USER_EMAIL=overspend-one-time@eval.local`; the Alerts page then shows the simulated date with **Advance 1 day**, **Advance 7 days** and **To month end**.
+
+## Run the agent every morning
+
+Set `ENABLE_SCHEDULER=1` and the API runs each real user's budget check daily at `DAILY_RUN_TIME` (06:00), plus the month-end slot on the 1st at `CLOSE_RUN_TIME` (05:00), in `SCHEDULER_TZ`. Run a single uvicorn worker (the default); the scheduler lives inside it.
+
 ## Demo on a phone
 
 1. Build and serve the web app on every network interface:
