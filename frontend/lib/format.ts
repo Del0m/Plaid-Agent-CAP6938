@@ -21,3 +21,9 @@ export function formatDate(iso: string | null): string {
 export function accountLabel(name: string, mask: string | null): string {
   return mask ? `${name} ••${mask}` : name;
 }
+
+// plaid's category enum for people: "GENERAL_MERCHANDISE" -> "General merchandise"
+export function categoryLabel(category: string): string {
+  const words = category.toLowerCase().replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}

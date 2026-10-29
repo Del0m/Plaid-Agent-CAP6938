@@ -98,6 +98,75 @@ export async function syncItem(itemId: number): Promise<void> {
   await request(`/plaid/items/${itemId}/sync`, { method: "POST" });
 }
 
+// the budget agent (tpc-20): live pace for the dashboard, runs started from the alerts page, and the
+// alerts the user accepts or dismisses
+
+export type BudgetLine = {
+  category: string;
+  kind: "fixed" | "flexible";
+  limit_cents: number;
+  spent_cents: number;
+  pace: number | null;
+  flagged: boolean;
+  reason: "pace" | "over_limit" | null;
+};
+
+export type Budget = {
+  period: { start: string; end: string } | null; // null: no budget covers today yet
+  days_elapsed: number;
+  days_in_period: number;
+  lines: BudgetLine[];
+  unbudgeted: { category: string; spent_cents: number }[];
+};
+
+export type Alert = {
+  id: number;
+  kind: string;
+  category: string | null;
+  severity: string;
+  cause: string | null;
+  action: string | null;
+  message: string;
+  proposed_limit_cents: number | null; // only for adjust_next_budget
+  status: "pending_user" | "accepted" | "dismissed";
+  created_at: string;
+  period_start: string | null;
+  awaiting_approval: boolean; // a paused budget run is waiting on this decision
+};
+
+export type RunStatus = {
+  run_id: number;
+  status: "running" | "ok" | "no_budget" | "period_ended" | "awaiting_user" | "error";
+  alert_ids: number[];
+  waiting_for: number[];
+  error: string | null;
+};
+
+export function getBudget(): Promise<Budget> {
+  return request<Budget>("/budget");
+}
+
+// starts a run in the background (it can outlast the proxy's 30 s); poll getRun with the id
+export function runBudget(date?: string): Promise<{ run_id: number | null }> {
+  return request("/budget/run", { method: "POST", body: JSON.stringify(date ? { date } : {}) });
+}
+
+export function getRun(runId: number): Promise<RunStatus> {
+  return request<RunStatus>(`/budget/runs/${runId}`);
+}
+
+export function getAlerts(status: "pending_user" | "all" = "all"): Promise<Alert[]> {
+  return request<Alert[]>(`/alerts?status=${status}`);
+}
+
+export function acceptAlert(id: number): Promise<Alert> {
+  return request<Alert>(`/alerts/${id}/accept`, { method: "POST" });
+}
+
+export function dismissAlert(id: number): Promise<Alert> {
+  return request<Alert>(`/alerts/${id}/dismiss`, { method: "POST" });
+}
+
 export type ChatSource = { title: string; section: string; url: string };
 export type ChatTool = { name: string; args: Record<string, unknown>; ok: boolean };
 

@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { ApiError, getChatHistory, streamChat, type ChatEvent } from "@/lib/api";
+import {
+  acceptAlert, ApiError, dismissAlert, errorMessage, getAlerts, getBudget, getChatHistory, getRun, runBudget, streamChat,
+  type ChatEvent,
+} from "@/lib/api";
 
 // a fetch response whose body arrives in the given byte chunks
 function streamed(chunks: Uint8Array[], status = 200) {
@@ -68,5 +71,44 @@ describe("getChatHistory", () => {
     vi.stubGlobal("fetch", fetchMock);
     expect(await getChatHistory("t1")).toEqual(turns);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/chat/t1");
+  });
+});
+
+describe("budget and alerts calls", () => {
+  function stub(body: unknown, status = 200) {
+    // a fresh response per call: a body can only be read once
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify(body), { status }));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  test("each call hits its route with the right method and body", async () => {
+    const f = stub({});
+    await getBudget();
+    await runBudget("2026-10-20");
+    await runBudget();
+    await getRun(7);
+    await getAlerts("pending_user");
+    await getAlerts();
+    await acceptAlert(3);
+    await dismissAlert(4);
+    const calls = f.mock.calls.map(([url, init]) => [url, init?.method ?? "GET", init?.body ?? null]);
+    expect(calls).toEqual([
+      ["/api/budget", "GET", null],
+      ["/api/budget/run", "POST", '{"date":"2026-10-20"}'],
+      ["/api/budget/run", "POST", "{}"],
+      ["/api/budget/runs/7", "GET", null],
+      ["/api/alerts?status=pending_user", "GET", null],
+      ["/api/alerts?status=all", "GET", null],
+      ["/api/alerts/3/accept", "POST", null],
+      ["/api/alerts/4/dismiss", "POST", null],
+    ]);
+  });
+
+  test("a 409 run reads as its detail", async () => {
+    stub({ detail: "A budget run is already in progress." }, 409);
+    const err = await runBudget().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(errorMessage(err)).toBe("A budget run is already in progress.");
   });
 });
