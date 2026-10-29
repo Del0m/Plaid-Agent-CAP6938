@@ -162,3 +162,9 @@ The budget graph's `diagnose` step asks the LLM why one category is overspent. T
 **What it does:** A purchase with no merchant name appears as `"merchant": null` in both the merchants and the transactions.
 
 **Why it's there:** Plaid often has no merchant name. The diagnosis must still be built, not crash in the scrubber.
+
+## `test_diagnose_memory_keys`
+
+**What it does:** Without memory, `this_month_alerts` and `past_advice` are empty lists. With memory, each alert carries only severity, action and status, and each piece of advice only month, action and outcome. A `message` passed in is dropped, so its text never reaches the prompt.
+
+**Why it's there:** The agent's memory (TPC-20) goes through the same allowlist as the rest of the prompt. The model needs to know it already alerted, not what it wrote. Old messages can quote merchants and amounts.

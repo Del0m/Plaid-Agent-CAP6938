@@ -78,3 +78,9 @@ Run them from `backend/`:
 **What it does:** For a `seasonal` diagnosis, or none at all, the decide prompt gives no proposed limit and says `adjust_next_budget` is only for a recurring cause.
 
 **Why it's there:** It was found in the TPC-19 review. In a live run, holiday shopping got `adjust_next_budget` with a $1,600 January limit. A holiday month or a one-off says nothing about next month's budget.
+
+## `test_decide_messages_severity_and_rules`
+
+**What it does:** The decide prompt states the flag's severity, and its instructions include the two memory rules: `no_op` when this month already has an alert of the same or higher severity, and never re-propose an adjustment the user dismissed.
+
+**Why it's there:** Deduplication is the model's call (TPC-20). It can only judge "nothing got worse" if it's told this flag's severity next to the earlier alerts'.

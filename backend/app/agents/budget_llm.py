@@ -31,6 +31,10 @@ DECIDE_PROMPT = (
     "- alert: tell the user about an unusual purchase or burst (usually a one_time cause).\n"
     "- suggest_cuts: flexible spending running hot without one cause; suggest where to spend less.\n"
     "- no_op: only when the overspend is trivial.\n"
+    "Memory rules, which come first:\n"
+    "- If this_month_alerts already has an alert and this flag's severity is not higher than the highest "
+    "severity there (high is higher than medium), choose no_op.\n"
+    "- Never choose adjust_next_budget if past_advice has a dismissed adjust_next_budget.\n"
     "Write message to the user in at most 2 plain sentences. Use only numbers given below, and mention the "
     "proposed limit if you choose adjust_next_budget. Don't give financial advice beyond the budget. "
     "Answer in JSON with action and message."
@@ -72,7 +76,8 @@ def diagnose_messages(context: str) -> list:
     return [SystemMessage(DIAGNOSE_PROMPT), HumanMessage(f"Facts:\n{context}")]
 
 
-def decide_messages(context: str, diagnosis: Optional[Diagnosis], projected_cents: int, proposed_cents: int) -> list:
+def decide_messages(context: str, diagnosis: Optional[Diagnosis], projected_cents: int, proposed_cents: int,
+                    severity: str) -> list:
     cause = f"{diagnosis.cause}: {diagnosis.evidence}" if diagnosis else "unknown (the cause could not be determined)"
     # a holiday month or a one-off says nothing about next month, so only a recurring cause gets a proposal
     if diagnosis and diagnosis.cause == "recurring":
@@ -80,6 +85,6 @@ def decide_messages(context: str, diagnosis: Optional[Diagnosis], projected_cent
     else:
         proposal = "none: adjust_next_budget is only for a recurring cause"
     return [SystemMessage(DECIDE_PROMPT), HumanMessage(
-        f"Facts:\n{context}\n\nDiagnosis: {cause}\n"
+        f"Facts:\n{context}\n\nDiagnosis: {cause}\nSeverity of this flag: {severity}\n"
         f"Projected spending by month end: ${projected_cents / 100:,.2f}\n"
         f"Proposed limit for next month: {proposal}")]

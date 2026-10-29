@@ -59,6 +59,33 @@ def plaid_sync(session: Session, user_id: str) -> dict:
     return {"items": len(items), "errors": errors}
 
 
+def _severity(reason: str) -> str:
+    return "high" if reason == "over_limit" else "medium"
+
+
+# memory, read by code (tpc-20): this period's overspend alerts for the category, oldest first
+def _this_month_alerts(s: Session, user_id: str, period_id: int, category: str) -> list[dict]:
+    alerts = s.scalars(select(Alert).where(Alert.user_id == user_id, Alert.period_id == period_id,
+                                           Alert.kind == "overspend", Alert.category == category)
+                       .order_by(Alert.created_at, Alert.id))
+    return [{"severity": a.severity, "action": a.action, "status": a.status} for a in alerts]
+
+
+# the category's advice in this budget month and the 3 before it, newest first. keyed by the alert's budget
+# month, not created_at: runs can be simulated on other dates than the wall clock
+def _past_advice(s: Session, user_id: str, period_start: date, category: str) -> list[dict]:
+    rows = s.execute(
+        select(AdviceLog, Alert, BudgetPeriod)
+        .join(Alert, AdviceLog.alert_id == Alert.id)
+        .join(BudgetPeriod, Alert.period_id == BudgetPeriod.id)
+        .where(AdviceLog.user_id == user_id, AdviceLog.category == category,
+               BudgetPeriod.start_date >= add_months(period_start, -3), BudgetPeriod.start_date <= period_start)
+        .order_by(BudgetPeriod.start_date.desc(), AdviceLog.id.desc())
+        .limit(5)).all()
+    return [{"month": p.start_date.strftime("%B %Y"), "action": a.action, "outcome": adv.outcome}
+            for adv, a, p in rows]
+
+
 def _label(category: str) -> str:
     return category.replace("_", " ").capitalize()
 
@@ -129,11 +156,15 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
             history = load_txns(s, state["user_id"], add_months(period.start_date, -3),
                                 period.start_date - timedelta(days=1))
             fits = {ln.category: ln.fit_json for ln in period.lines}
+            memory = {f["category"]: (_this_month_alerts(s, state["user_id"], period.id, f["category"]),
+                                      _past_advice(s, state["user_id"], period.start_date, f["category"]))
+                      for f in state["flags"]}
         for flag in state["flags"]:
             cat = flag["category"]
             f = overspend_facts(PaceResult(**flag), fits.get(cat), txns, history, period.start_date)
             facts[cat] = {**asdict(f), "proposed_limit_cents": proposed_limit_cents(f)}
-            contexts[cat] = gateway.build_context("diagnose", facts=f, transactions=txns)
+            contexts[cat] = gateway.build_context("diagnose", facts=f, transactions=txns,
+                                                  this_month_alerts=memory[cat][0], past_advice=memory[cat][1])
             d = invoke_structured(model, Diagnosis, diagnose_messages(contexts[cat]))
             diagnoses[cat] = d.model_dump() if d else None
             failures += d is None
@@ -146,7 +177,7 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
             d, f = state["diagnoses"][cat], state["facts"][cat]
             a = invoke_structured(model, Action, decide_messages(
                 state["contexts"][cat], Diagnosis(**d) if d else None, f["projected_cents"],
-                f["proposed_limit_cents"]))
+                f["proposed_limit_cents"], _severity(flag["reason"])))
             fallback = a is None
             if fallback:
                 failures += 1
@@ -168,7 +199,7 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
                 if act["action"] == "no_op":
                     continue
                 alert = Alert(user_id=state["user_id"], period_id=state["period_id"], kind="overspend",
-                              category=cat, severity="high" if flag["reason"] == "over_limit" else "medium",
+                              category=cat, severity=_severity(flag["reason"]),
                               cause=d["cause"] if d else None, action=act["action"], message=act["message"],
                               proposed_limit_cents=act["proposed_limit_cents"], status="pending_user")
                 s.add(alert)

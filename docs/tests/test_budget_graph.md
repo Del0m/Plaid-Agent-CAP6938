@@ -37,6 +37,24 @@ Run them from `backend/`:
 
 **Why it's there:** When the user accepts or dismisses that alert (TPC-20), the decision is written back to this advice row as its outcome. The agent's memory then shows what the user did with it.
 
+## `test_memory_facts_in_prompt`
+
+**What it does:** After a first run alerts on general merchandise, the second run's diagnose prompt lists that alert (`high`, `alert`, `pending_user`) under `this_month_alerts`. It lists the advice under `past_advice` (October 2026, `alert`, no outcome yet), and doesn't contain the first alert's message.
+
+**Why it's there:** It's the memory the model needs to avoid repeating itself (TPC-20), read by code and passed through the gateway. Past advice is keyed by its budget month, not the wall clock, because runs can be simulated on other dates.
+
+## `test_second_run_no_op_no_alert`
+
+**What it does:** When the model chooses `no_op` on the second run, there is still exactly one alert.
+
+**Why it's there:** It's the done-when's mechanism with a scripted model: deduplication happens because the model chose `no_op`. `test_live_second_run_no_duplicate` checks that the real model does.
+
+## `test_memory_other_category_ignored`
+
+**What it does:** A dismissed travel alert in the same month doesn't appear in the general-merchandise prompt.
+
+**Why it's there:** Memory is per category. Another category's alerts would mislead the model into `no_op` for a new overspend.
+
 ## `test_second_run_reuses_budget_and_alerts_again`
 
 **What it does:** Two runs on the same day share one budget period, write two alerts and record two runs.

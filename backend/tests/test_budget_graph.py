@@ -68,6 +68,37 @@ def test_advice_links_alert(db, tmp_path):
     assert advice.alert_id == alert.id
 
 
+def test_memory_facts_in_prompt(db, tmp_path):
+    uid = seed(db, "overspend-one-time")
+    first = run(db, uid, model=fake(DIAG, ALERT), tmp_path=tmp_path)
+    m = fake(DIAG, reply(action="no_op", message="Already told you."))
+    run(db, uid, model=m, tmp_path=tmp_path)
+    text = str(m.seen[0][-1].content)
+    assert '"this_month_alerts":[{"severity":"high","action":"alert","status":"pending_user"}]' in text
+    assert '"past_advice":[{"month":"October 2026","action":"alert","outcome":null}]' in text
+    assert first["actions"][GM]["message"] not in text
+
+
+def test_second_run_no_op_no_alert(db, tmp_path):
+    uid = seed(db, "overspend-one-time")
+    run(db, uid, model=fake(DIAG, ALERT), tmp_path=tmp_path)
+    run(db, uid, model=fake(DIAG, reply(action="no_op", message="Already told you.")), tmp_path=tmp_path)
+    assert len(rows(db, Alert)) == 1
+
+
+def test_memory_other_category_ignored(db, tmp_path):
+    uid = seed(db, "overspend-one-time")
+    run(db, uid, model=fake(DIAG, ALERT), tmp_path=tmp_path)
+    with db() as s:
+        period = s.query(BudgetPeriod).one()
+        s.add(Alert(user_id=uid, period_id=period.id, kind="overspend", category="TRAVEL", severity="medium",
+                    action="alert", message="travel", status="dismissed"))
+        s.commit()
+    m = fake(DIAG, reply(action="no_op", message="Already told you."))
+    run(db, uid, model=m, tmp_path=tmp_path)
+    assert '"status":"dismissed"' not in str(m.seen[0][-1].content)
+
+
 def test_second_run_reuses_budget_and_alerts_again(db, tmp_path):
     uid = seed(db, "overspend-one-time")
     run(db, uid, model=fake(DIAG, ALERT, DIAG, ALERT), tmp_path=tmp_path)

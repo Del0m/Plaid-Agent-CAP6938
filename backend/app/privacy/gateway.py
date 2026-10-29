@@ -2,7 +2,7 @@ import json
 import secrets
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .. import config
@@ -23,7 +23,11 @@ TXN_FIELDS = ("date", "amount", "merchant")
 TXN_LIMIT = 50
 # the budget graph's diagnose step: one flagged category's facts and its rows (spec: tpc-19)
 DIAGNOSE_FIELDS = ("category", "reason", "kind", "month", "limit", "spent", "pace", "day", "days_in_month",
-                   "projected", "largest", "merchants", "history", "outlier_months", "transactions")
+                   "projected", "largest", "merchants", "history", "outlier_months", "transactions",
+                   "this_month_alerts", "past_advice")
+# the agent's memory of a category (tpc-20): what it already alerted and what the user decided, never the text
+ALERT_MEMORY_FIELDS = ("severity", "action", "status")
+ADVICE_MEMORY_FIELDS = ("month", "action", "outcome")
 TXN_LIMIT_DIAGNOSE = 20
 DEFAULT_SPENDING_DAYS = 30
 
@@ -54,9 +58,12 @@ class PrivacyGateway:
 
     def build_context(self, purpose: Purpose, *, start: Optional[date] = None,
                       end: Optional[date] = None, category: Optional[str] = None,
-                      facts: Optional[OverspendFacts] = None, transactions: Optional[list[Txn]] = None) -> str:
+                      facts: Optional[OverspendFacts] = None, transactions: Optional[list[Txn]] = None,
+                      this_month_alerts: Sequence[dict] = (), past_advice: Sequence[dict] = ()) -> str:
         if purpose == "diagnose":
             data = self._diagnose(facts, transactions or [])
+            data["this_month_alerts"] = [{k: a.get(k) for k in ALERT_MEMORY_FIELDS} for a in this_month_alerts]
+            data["past_advice"] = [{k: a.get(k) for k in ADVICE_MEMORY_FIELDS} for a in past_advice]
             category = facts.category
         elif purpose == "accounts":
             data = self._accounts()

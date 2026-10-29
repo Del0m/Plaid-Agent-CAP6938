@@ -57,17 +57,25 @@ def test_model_error_propagates():
 
 def test_action_schema():
     m = model(json.dumps({"action": "adjust_next_budget", "message": "Raise it to $160."}))
-    assert invoke_structured(m, Action, decide_messages("{}", None, 15500, 16000)).action == "adjust_next_budget"
+    assert invoke_structured(m, Action, decide_messages("{}", None, 15500, 16000, "medium")).action == "adjust_next_budget"
 
 
 def test_decide_messages_carry_numbers():
     diag = Diagnosis(cause="recurring", evidence="A new $90 gym.")
-    text = decide_messages('{"category":"PERSONAL_CARE"}', diag, 15500, 16000)[-1].content
+    text = decide_messages('{"category":"PERSONAL_CARE"}', diag, 15500, 16000, "high")[-1].content
     assert "$155.00" in text and "$160.00" in text and "recurring" in text and "PERSONAL_CARE" in text
-    assert "unknown" in decide_messages("{}", None, 15500, 16000)[-1].content
+    assert "unknown" in decide_messages("{}", None, 15500, 16000, "medium")[-1].content
 
 
 def test_no_proposal_unless_recurring():
-    text = decide_messages("{}", Diagnosis(cause="seasonal", evidence="Holiday gifts."), 155000, 160000)[-1].content
+    text = decide_messages("{}", Diagnosis(cause="seasonal", evidence="Holiday gifts."), 155000, 160000, "high")[-1].content
     assert "$1,600.00" not in text and "only for a recurring cause" in text
-    assert "only for a recurring cause" in decide_messages("{}", None, 15500, 16000)[-1].content
+    assert "only for a recurring cause" in decide_messages("{}", None, 15500, 16000, "medium")[-1].content
+
+
+
+def test_decide_messages_severity_and_rules():
+    from app.agents.budget_llm import DECIDE_PROMPT
+    assert "Severity of this flag: high" in decide_messages("{}", None, 15500, 16000, "high")[-1].content
+    assert "choose no_op" in DECIDE_PROMPT
+    assert "Never choose adjust_next_budget if past_advice" in DECIDE_PROMPT
