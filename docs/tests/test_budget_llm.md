@@ -66,3 +66,15 @@ Run them from `backend/`:
 **What it does:** The decide prompt carries the facts, the diagnosis cause, the projected spend ($155.00) and the proposed limit ($160.00) in dollars. Without a diagnosis it says the cause is unknown.
 
 **Why it's there:** The LLM picks the action but never computes a money number. It gets the code's projection and proposal to quote, and still gets a prompt when the diagnosis failed.
+
+## `test_whitespace_text_is_invalid`
+
+**What it does:** Evidence of only spaces counts as invalid, and the retry's reply is used.
+
+**Why it's there:** It was found in the TPC-19 review: `min_length=1` alone let `"   "` through, which would have written a blank alert.
+
+## `test_no_proposal_unless_recurring`
+
+**What it does:** For a `seasonal` diagnosis, or none at all, the decide prompt gives no proposed limit and says `adjust_next_budget` is only for a recurring cause.
+
+**Why it's there:** It was found in the TPC-19 review. In a live run, holiday shopping got `adjust_next_budget` with a $1,600 January limit. A holiday month or a one-off says nothing about next month's budget.

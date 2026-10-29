@@ -47,3 +47,23 @@ def test_cli_bad_date(db):
     with pytest.raises(SystemExit) as exc:
         main(["--user", "x", "--date", "2026-13-01"], session_factory=db)
     assert exc.value.code == 2
+
+
+def test_cli_shows_sync_errors(db, capsys, monkeypatch):
+    from app.agents import budget_graph
+
+    def failing_sync(session, user_id):
+        return {"items": 1, "errors": ["InvalidToken"]}
+
+    monkeypatch.setattr(budget_graph, "plaid_sync", failing_sync)
+    uid = seeded(db)
+    assert main(["--user", uid, "--date", "2026-10-20"], session_factory=db,
+                model=ScriptedChatModel(replies=replies())) == 0
+    assert "sync: 1 item(s), errors: InvalidToken (data may be stale)" in capsys.readouterr().out
+
+
+def test_cli_shows_sync_skipped(db, capsys):
+    uid = seeded(db)
+    main(["--user", uid, "--date", "2026-10-20", "--no-sync"], session_factory=db,
+         model=ScriptedChatModel(replies=replies()))
+    assert "sync: skipped" in capsys.readouterr().out

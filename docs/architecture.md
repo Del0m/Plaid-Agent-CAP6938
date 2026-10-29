@@ -198,16 +198,24 @@ Use **structured output** (Pydantic models) for `diagnose` and `decide_action` s
 - **State:** plain values (ids, ISO dates, dicts), so TPC-20 can add a checkpointer and `interrupt()`.
 - **Diagnosis:** for each flag, `budget_engine/diagnose.py` computes the facts:
   - the largest purchase and its share;
-  - each top merchant's spend this month and how many of the 3 earlier months it appeared in, with its typical amount;
+  - its ratio to that merchant's usual month;
+  - each top merchant's spend this month, how many of the 3 earlier months it appeared in, with its typical amount, and its `pattern` (`new`, `started_recently` or `regular`);
   - the history and outlier months from `fit_json`;
   - the projection and the proposed limit.
 
   The gateway turns them into the prompt (purpose `diagnose`, section 7). `agents/budget_llm.py` asks for a `Diagnosis {cause, evidence}`, then an `Action {action, message}`.
 - **Structured output:** `invoke_structured` binds Ollama's `format` to the model's JSON schema, validates with Pydantic and retries once. If it still fails, the overspend is still alerted: with no cause, or with a message written by code.
-- **Writing results:** `log_advice` writes an `overspend` alert (`pending_user`, severity `high` over the limit, `medium` on pace) and an `advice_log` row for every action except `no_op`. For `adjust_next_budget`, the alert carries `proposed_limit_cents`, computed by code (projection rounded up to $5; a fixed line's actual), never by the model.
+- **Writing results:** `log_advice` writes an `overspend` alert (`pending_user`, severity `high` over the limit, `medium` on pace) and an `advice_log` row for every action except `no_op`.
+- **`adjust_next_budget`:**
+  - It is allowed only for a **recurring** cause. The code downgrades any other cause's adjust to an `alert` with its own message, and the decide prompt only offers a proposal for a recurring cause.
+  - The alert carries `proposed_limit_cents`, computed by code, never by the model: the old limit plus the typical month of the merchants that started recently (with none, the projection), rounded up to $5. A fixed line's proposal is its actual amount.
 - **`categorize`** only counts uncategorized transactions for now; LLM categorization is a follow-up.
 - **Recording the run:** every run writes an `agent_runs` row (`running` → `ok`/`no_budget`/`period_ended`, or `error` with the exception type). Its summary holds the flags, causes, actions, alert ids, unbudgeted categories, uncategorized count, sync result and LLM failures.
-- **Live result (`qwen2.5:14b`):** the three planted users in `eval/budget_users.py` (`PLANTED`) get the right cause twice in a row. One-time gets `alert`; recurring and seasonal get `adjust_next_budget`.
+- **Live result (`qwen2.5:14b`):** the four planted users in `eval/budget_users.py` (`PLANTED`) get the right cause and an allowed action twice in a row:
+  - one-time: `alert`;
+  - recurring: `adjust_next_budget`, proposing $135;
+  - seasonal: `suggest_cuts`;
+  - a $520 one-off at a regular shop: `one_time`, `alert`.
 
 ### 6.3 Initial budget (from ~90 days of history)
 
@@ -655,7 +663,8 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-28 | The proposed limit for `adjust_next_budget` is computed by code (projection rounded up to $5; a fixed line's actual) and stored in `alerts.proposed_limit_cents`; the LLM only picks the action | The LLM never does arithmetic that matters, and TPC-22's close applies exactly what the user accepted |
 | 2026-10-28 | A structured call that fails twice falls back: no cause, or an `alert` with a message written by code | An overspend must never go unreported because the model produced bad JSON |
 | 2026-10-28 | `invoke_structured` binds Ollama's `format` to the JSON schema and validates with Pydantic, instead of `with_structured_output` | Constrained decoding on the real model, the same path with the scripted test model, and the retry controls parsing |
-| 2026-10-28 | The diagnose prompt checks the causes in order: recurring (seen in 1-2 earlier months at about the same amount), then one-time, then seasonal | The first live run called the new gym `one_time` ("a new merchant with only one charge seen before"). With the ordered rules, all three planted causes are right, twice in a row |
+| 2026-10-28 | The diagnose prompt checks the causes in order (recurring, then one-time, then seasonal) against facts the code names outright: each merchant's `pattern` (`new` / `started_recently` / `regular`) and the largest purchase's ratio to its merchant's usual month | Live, the model read "seen in 1 earlier month" as new and called the gym `one_time`, and a review probe showed a $520 one-off at a regular shop called `recurring`. With the named facts, all four planted users are right, twice in a row |
+| 2026-10-28 | Only a recurring cause may `adjust_next_budget` (a code guard downgrades the rest to an `alert`); a recurring proposal is the old limit plus the new merchants' typical month | Review, reproduced live: holiday shopping got a $1,600 January limit, and the gym got $205 from a straight-line projection of charges that had already posted. Now it's $135 |
 | 2026-10-28 | `categorize` only counts uncategorized transactions in TPC-19; unbudgeted spending is listed, not alerted | Sandbox and synthetic data are always categorized, and nothing in the done-when exercises it. A category with no line isn't overspent against anything |
 | 2026-10-28 | Initial budgets keep the **median** (× 1.05 for flexible lines) | Measured on five synthetic users: pooled MAPE 7.1% (median) vs 17.7% (mean). The mean is 1-2 points better when there's no outlier but 58.8% vs 9.4% with one trip, and it budgets one-off purchases. `eval/results/2026-10-28/budget_accuracy/` |
 | | | |

@@ -147,4 +147,10 @@ PLANTED = (
              *(Once("GENERAL_MERCHANDISE", shop, cents, date(2026, 12, d)) for shop, d, cents in DECEMBER_SHOPS)),
             today=date(2026, 12, 1), start=date(2026, 9, 1), end=date(2026, 12, 31),
             run_date=date(2026, 12, 15), expected_cause="seasonal"),
+    # found in the tpc-19 review: a big one-off at a regular shop was called recurring
+    Profile("overspend-known-merchant", "a $520 one-off at a shop that usually comes to $120 a month", 14,
+            (*PLANTED_BASE, Monthly("GENERAL_MERCHANDISE", "MegaMart", 12000, day=8),
+             Once("GENERAL_MERCHANDISE", "MegaMart", 52000, date(2026, 10, 12))),
+            today=date(2026, 10, 1), start=date(2026, 7, 1), end=date(2026, 10, 31),
+            run_date=date(2026, 10, 20), expected_cause="one_time"),
 )

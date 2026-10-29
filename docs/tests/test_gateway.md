@@ -135,7 +135,7 @@ The budget graph's `diagnose` step asks the LLM why one category is overspent. T
 
 ## `test_diagnose_allowlist`
 
-**What it does:** The prompt's data has exactly the `DIAGNOSE_FIELDS` keys. Money is in dollars ($157.50 limit, $635 spent), the month is named ("October 2026"), and the largest purchase carries its share (0.94). History months are named oldest first ("July 2026").
+**What it does:** The prompt's data has exactly the `DIAGNOSE_FIELDS` keys. Money is in dollars ($157.50 limit, $635 spent), and the month is named ("October 2026"). The largest purchase carries its share (0.94) and its ratio to the merchant's usual month (none for a new merchant). Each merchant has its `pattern` (`new` here). History months are named oldest first ("July 2026").
 
 **Why it's there:** It's the allowlist rule (architecture section 7): a field added to the facts later can't leak into a prompt by accident. Dollars and month names are what a small model reads correctly.
 

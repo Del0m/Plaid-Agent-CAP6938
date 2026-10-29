@@ -106,11 +106,11 @@ def test_no_flags_no_llm(db, tmp_path):
 def test_adjust_stores_proposed_limit(db, tmp_path):
     uid = seed(db, "overspend-recurring")
     run(db, uid, model=fake(reply(cause="recurring", evidence="A new $90 gym."),
-                            reply(action="adjust_next_budget", message="Raise personal care to $205.")),
+                            reply(action="adjust_next_budget", message="Raise personal care to $135.")),
         tmp_path=tmp_path)
     [alert] = rows(db, Alert)
-    # $130 spent by day 20 of 31 projects to $201.50, rounded up to $205
-    assert (alert.action, alert.proposed_limit_cents, alert.severity) == ("adjust_next_budget", 20500, "high")
+    # the old $42 limit plus the new $90 gym's typical month, up to $5 (not $130 projected straight-line)
+    assert (alert.action, alert.proposed_limit_cents, alert.severity) == ("adjust_next_budget", 13500, "high")
 
 
 def test_no_op_writes_nothing(db, tmp_path):
@@ -136,6 +136,18 @@ def test_decide_failure_fallback(db, tmp_path):
     assert alert.action == "alert" and alert.cause == "one_time"
     assert alert.message.startswith("General merchandise is over its $") and "limit: $" in alert.message
     assert state["actions"][GM]["fallback"] is True and state["llm_failures"] == 1
+
+
+def test_adjust_downgraded_unless_recurring(db, tmp_path):
+    # live, holiday shopping got "adjust_next_budget" with a $1,600 january limit; only a recurring cause may adjust
+    uid = seed(db, "overspend-one-time")
+    state = run(db, uid, model=fake(reply(cause="seasonal", evidence="Holiday gifts."),
+                                    reply(action="adjust_next_budget", message="I propose a new limit of $1600.00.")),
+                tmp_path=tmp_path)
+    [alert] = rows(db, Alert)
+    assert (alert.action, alert.proposed_limit_cents) == ("alert", None)
+    assert alert.message.startswith("General merchandise is over its $") and "1600" not in alert.message
+    assert state["actions"][GM]["downgraded"] is True
 
 
 def test_sync_called_and_failure_recorded(db, tmp_path):
@@ -209,4 +221,8 @@ def test_live_planted_causes(db, tmp_path):
         print(p.id, state["diagnoses"][cat], state["actions"][cat])
         assert state["diagnoses"][cat] is not None, p.id
         assert state["diagnoses"][cat]["cause"] == p.expected_cause, p.id
-        assert state["actions"][cat]["action"] != "no_op", p.id
+        # only a recurring cause may change next month's budget (the guard downgrades anything else)
+        if p.expected_cause == "recurring":
+            assert state["actions"][cat]["action"] == "adjust_next_budget", p.id
+        else:
+            assert state["actions"][cat]["action"] not in ("adjust_next_budget", "no_op"), p.id

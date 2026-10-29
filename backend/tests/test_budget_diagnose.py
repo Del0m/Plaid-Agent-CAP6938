@@ -90,3 +90,32 @@ def test_proposed_limit():
     rent = "RENT_AND_UTILITIES"
     f = overspend_facts(flag(rent, 13000, 12000, kind="fixed"), None, [t(10, 1, 13000, rent)], [], OCT)
     assert proposed_limit_cents(f) == 13000
+
+
+def test_largest_vs_typical():
+    cat = GM = "GENERAL_MERCHANDISE"
+    period = [t(10, 8, 12000, merchant="MegaMart"), t(10, 12, 52000, merchant="MegaMart")]
+    history = [t(m, 8, 12000, merchant="MegaMart") for m in (7, 8, 9)]
+    f = overspend_facts(flag(GM, 64000, 12600), None, period, history, OCT)
+    assert round(f.largest_vs_typical, 2) == 4.33
+    f = overspend_facts(flag(GM, 60000, 15750), None, [t(10, 12, 60000, merchant="ElectroMart")], [], OCT)
+    assert f.largest_vs_typical is None
+
+
+def test_recurring_proposal_adds_new_merchants_typical():
+    # the gym started last month: next month needs the old limit plus a gym, not a straight-line projection
+    cat = "PERSONAL_CARE"
+    period = [t(10, 3, 9000, cat, "FitClub Gym"), t(10, 20, 4000, cat, "Barber")]
+    history = [t(m, 20, 4000, cat, "Barber") for m in (7, 8, 9)] + [t(9, 3, 9000, cat, "FitClub Gym")]
+    f = overspend_facts(flag(cat, 13000, 4200), None, period, history, OCT)
+    assert proposed_limit_cents(f) == 13500      # 4200 + 9000, up to $5
+
+
+def test_merchant_pattern():
+    # a small model misread "months_seen_before: 1" as new, so the code names the pattern outright
+    cat = "PERSONAL_CARE"
+    period = [t(10, 3, 9000, cat, "FitClub Gym"), t(10, 20, 4000, cat, "Barber"), t(10, 9, 2500, cat, "Spa")]
+    history = [t(m, 20, 4000, cat, "Barber") for m in (7, 8, 9)] + [t(9, 3, 9000, cat, "FitClub Gym")]
+    f = overspend_facts(flag(cat, 15500, 4200), None, period, history, OCT)
+    assert {m.merchant: m.pattern for m in f.merchants} == {
+        "FitClub Gym": "started_recently", "Barber": "regular", "Spa": "new"}

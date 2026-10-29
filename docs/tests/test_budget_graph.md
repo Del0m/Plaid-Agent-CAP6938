@@ -63,7 +63,7 @@ Run them from `backend/`:
 
 ## `test_adjust_stores_proposed_limit`
 
-**What it does:** When the model picks `adjust_next_budget` for the gym user, the alert stores a proposed limit of $205: $130 spent by day 20 of 31 projects to $201.50, rounded up to $5.
+**What it does:** When the model picks `adjust_next_budget` for the gym user, the alert stores a proposed limit of $135: the old $42 limit plus the new gym's $90 typical month, rounded up to $5.
 
 **Why it's there:** The number the user accepts is computed by code, never written by the model, and TPC-22's close applies exactly that number.
 
@@ -84,6 +84,12 @@ Run them from `backend/`:
 **What it does:** Two unparseable decide replies produce an `alert` with the code's own message ("General merchandise is over its $… limit: $… so far."), marked as a fallback.
 
 **Why it's there:** It's the same rule for the second call: the user is still told, in plain numbers.
+
+## `test_adjust_downgraded_unless_recurring`
+
+**What it does:** When the model diagnoses `seasonal` but picks `adjust_next_budget` (with a "$1600" message), the code stores a plain `alert` with no proposed limit and its own message, and marks the action as downgraded.
+
+**Why it's there:** It's the code guard behind the prompt change. Only a recurring cause may change next month's budget, and the model's message can't be kept because it quotes a limit it shouldn't have proposed.
 
 ## `test_sync_called_and_failure_recorded`
 
@@ -117,6 +123,6 @@ Run them from `backend/`:
 
 ## `test_live_planted_causes`
 
-**What it does:** It is skipped unless Ollama is running with `OLLAMA_MODEL`. For each planted user, it runs the real model on its run date and checks that the cause is the planted one and the action isn't `no_op`.
+**What it does:** It is skipped unless Ollama is running with `OLLAMA_MODEL`. For each of the four planted users, it runs the real model on its run date and checks the cause. A recurring cause must lead to `adjust_next_budget`; every other cause must lead to something other than `adjust_next_budget` or `no_op`.
 
-**Why it's there:** It's the done-when: the local model gets the right cause from the computed facts for all three causes, not just one.
+**Why it's there:** It's the done-when: the local model gets the right cause from the computed facts for all three causes, plus the big one-off at a regular shop found in review. Checking the action as well catches a proposal the user shouldn't get, such as a higher budget after holiday shopping.

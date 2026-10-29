@@ -44,6 +44,12 @@ def test_empty_text_is_invalid():
     assert len(m.seen) == 2
 
 
+def test_whitespace_text_is_invalid():
+    m = model(json.dumps({"cause": "one_time", "evidence": "   "}), GOOD)
+    assert invoke_structured(m, Diagnosis, diagnose_messages("{}")).evidence.startswith("One $600")
+    assert len(m.seen) == 2
+
+
 def test_model_error_propagates():
     with pytest.raises(ConnectionError):
         invoke_structured(model(ConnectionError("down")), Diagnosis, diagnose_messages("{}"))
@@ -59,3 +65,9 @@ def test_decide_messages_carry_numbers():
     text = decide_messages('{"category":"PERSONAL_CARE"}', diag, 15500, 16000)[-1].content
     assert "$155.00" in text and "$160.00" in text and "recurring" in text and "PERSONAL_CARE" in text
     assert "unknown" in decide_messages("{}", None, 15500, 16000)[-1].content
+
+
+def test_no_proposal_unless_recurring():
+    text = decide_messages("{}", Diagnosis(cause="seasonal", evidence="Holiday gifts."), 155000, 160000)[-1].content
+    assert "$1,600.00" not in text and "only for a recurring cause" in text
+    assert "only for a recurring cause" in decide_messages("{}", None, 15500, 16000)[-1].content

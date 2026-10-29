@@ -151,7 +151,12 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
             if fallback:
                 failures += 1
                 a = Action(action="alert", message=_fallback_message(flag))
-            actions[cat] = {"action": a.action, "message": a.message, "fallback": fallback,
+            # only a recurring cause may change next month's budget; the model's message would quote a limit
+            # it shouldn't have proposed, so the code writes the alert instead
+            downgraded = a.action == "adjust_next_budget" and (d or {}).get("cause") != "recurring"
+            if downgraded:
+                a = Action(action="alert", message=_fallback_message(flag))
+            actions[cat] = {"action": a.action, "message": a.message, "fallback": fallback, "downgraded": downgraded,
                             "proposed_limit_cents": f["proposed_limit_cents"] if a.action == "adjust_next_budget" else None}
         return {"actions": actions, "llm_failures": failures}
 
@@ -247,6 +252,14 @@ def _money(cents: Optional[int]) -> str:
     return "-" if cents is None else f"${cents / 100:,.2f}"
 
 
+# a failed sync means the budget was checked on stale data; say so instead of a bare "ok"
+def _sync_line(sync: Optional[dict]) -> str:
+    if not sync or sync.get("skipped"):
+        return "skipped"
+    line = f"{sync['items']} item(s)"
+    return f"{line}, errors: {', '.join(sync['errors'])} (data may be stale)" if sync["errors"] else line
+
+
 def _print_report(state: dict) -> None:
     print(f"run {state['run_id']}  status: {state['status']}  period: {state.get('period_id')}")
     for r in state.get("results", []):
@@ -259,12 +272,14 @@ def _print_report(state: dict) -> None:
         d, a = state["diagnoses"][cat], state["actions"][cat]
         print(f"\n{cat} ({flag['reason']})")
         print(f"  cause:  {d['cause']} - {d['evidence']}" if d else "  cause:  unknown (llm failed)")
-        print(f"  action: {a['action']}{' (fallback)' if a['fallback'] else ''}")
+        note = " (fallback)" if a["fallback"] else " (downgraded: only recurring adjusts)" if a.get("downgraded") else ""
+        print(f"  action: {a['action']}{note}")
         print(f"  message: {a['message']}")
         if a["proposed_limit_cents"] is not None:
             print(f"  proposed limit: {_money(a['proposed_limit_cents'])}")
     unbudgeted = [r["category"] for r in state.get("results", []) if r["kind"] == "unbudgeted"]
-    print(f"\nalerts written: {len(state.get('alert_ids', []))}")
+    print(f"\nsync: {_sync_line(state.get('sync'))}")
+    print(f"alerts written: {len(state.get('alert_ids', []))}")
     print(f"unbudgeted: {', '.join(unbudgeted) or 'none'}")
     print(f"llm failures: {state.get('llm_failures', 0)}")
 

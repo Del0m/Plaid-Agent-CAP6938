@@ -98,7 +98,14 @@ def test_planted_carry_run_date_and_cause():
     assert {p.id: (p.run_date, p.expected_cause) for p in PLANTED} == {
         "overspend-one-time": (date(2026, 10, 20), "one_time"),
         "overspend-recurring": (date(2026, 10, 20), "recurring"),
-        "overspend-seasonal": (date(2026, 12, 15), "seasonal")}
+        "overspend-seasonal": (date(2026, 12, 15), "seasonal"),
+        "overspend-known-merchant": (date(2026, 10, 20), "one_time")}
+
+
+def test_planted_known_merchant_big_purchase():
+    mega = [(d, c) for d, c, _, m in transactions(planted("overspend-known-merchant")) if m == "MegaMart"]
+    assert (date(2026, 10, 12), 52000) in mega
+    assert [d for d, c in mega if c == 12000] == [date(2026, m, 8) for m in (7, 8, 9, 10)]
 
 
 def test_profiles_unchanged():

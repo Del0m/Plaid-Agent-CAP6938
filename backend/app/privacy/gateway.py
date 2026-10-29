@@ -142,9 +142,10 @@ class PrivacyGateway:
             "projected": _dollars(facts.projected_cents),
             "largest": None if largest is None else {
                 "date": largest.date, "amount": _dollars(largest.amount_cents),
-                "merchant": scrub_merchant(largest.merchant), "share_of_spent": round(facts.largest_share, 2)},
+                "merchant": scrub_merchant(largest.merchant), "share_of_spent": round(facts.largest_share, 2),
+                "times_typical": None if facts.largest_vs_typical is None else round(facts.largest_vs_typical, 1)},
             "merchants": [{"merchant": scrub_merchant(m.merchant), "this_month": _dollars(m.period_cents),
-                           "charges": m.charges, "months_seen_before": m.prior_months,
+                           "charges": m.charges, "months_seen_before": m.prior_months, "pattern": m.pattern,
                            "typical": _dollars(m.typical_cents)} for m in facts.merchants],
             "history": [{"month": _month_name(add_months(facts.month, i - n)), "total": _dollars(total)}
                         for i, total in enumerate(facts.monthly_totals)],

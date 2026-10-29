@@ -17,6 +17,7 @@ These tests cover `eval/budget_users.py`, the synthetic users for the budget acc
 | `overspend-one-time` | $600 at ElectroMart on Oct 12, against ~$150/month of general merchandise | Oct 20 | `one_time` |
 | `overspend-recurring` | a $90 gym first charged Sep 3, again Oct 3, against a $40/month barber | Oct 20 | `recurring` |
 | `overspend-seasonal` | eight $60-$120 purchases at eight shops, Dec 1-14 | Dec 15 | `seasonal` |
+| `overspend-known-merchant` | a $520 one-off on Oct 12 at MegaMart, which usually comes to $120 a month | Oct 20 | `one_time` |
 
 Run them from `backend/`:
 
@@ -105,7 +106,7 @@ Run them from `backend/`:
 
 ## `test_planted_carry_run_date_and_cause`
 
-**What it does:** Each planted user has its run date and expected cause: Oct 20 for one-time and recurring, Dec 15 for seasonal.
+**What it does:** Each planted user has its run date and expected cause: Oct 20 for one-time, recurring and known-merchant, and Dec 15 for seasonal.
 
 **Why it's there:** The seed script prints the run command from `run_date`, and the live test checks `diagnose` against `expected_cause`.
 
@@ -114,3 +115,9 @@ Run them from `backend/`:
 **What it does:** The accuracy-eval profiles are the same five as before, and none has a run date.
 
 **Why it's there:** The planted users are a separate tuple, so the TPC-18 accuracy results stay comparable.
+
+## `test_planted_known_merchant_big_purchase`
+
+**What it does:** The known-merchant user has its regular $120 MegaMart charge on the 8th of each month, July to October, plus a $520 purchase on Oct 12.
+
+**Why it's there:** It was found in the TPC-19 review: a big one-off at a regular shop was diagnosed `recurring`, which, before the guard, could propose a higher budget for a one-off. The live check now covers it.

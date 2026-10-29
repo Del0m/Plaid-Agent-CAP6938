@@ -257,8 +257,10 @@ def test_diagnose_allowlist(db, tmp_path):
     d = data(prompt)
     assert set(d) == set(DIAGNOSE_FIELDS)
     assert (d["limit"], d["spent"], d["month"], d["day"], d["days_in_month"]) == (157.5, 635.0, "October 2026", 20, 31)
-    assert d["largest"] == {"date": "2026-10-12", "amount": 600.0, "merchant": "ElectroMart", "share_of_spent": 0.94}
+    assert d["largest"] == {"date": "2026-10-12", "amount": 600.0, "merchant": "ElectroMart", "share_of_spent": 0.94,
+                            "times_typical": None}
     assert d["history"][0] == {"month": "July 2026", "total": 150.0}
+    assert d["merchants"][0]["pattern"] == "new"
 
 
 def test_diagnose_scrubs_merchants(db, tmp_path):

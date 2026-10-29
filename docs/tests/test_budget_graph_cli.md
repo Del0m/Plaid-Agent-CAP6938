@@ -38,3 +38,15 @@ Run them from `backend/`:
 **What it does:** `--date 2026-13-01` exits with argparse's usage error (code 2).
 
 **Why it's there:** A mistyped date should fail before anything touches the database.
+
+## `test_cli_shows_sync_errors`
+
+**What it does:** When the sync reports an error, the report says `sync: 1 item(s), errors: InvalidToken (data may be stale)`.
+
+**Why it's there:** It was found in the TPC-19 review: a failed sync used to finish as a plain `status: ok`, so someone running this daily would never learn their spending was out of date.
+
+## `test_cli_shows_sync_skipped`
+
+**What it does:** With `--no-sync`, the report says `sync: skipped`.
+
+**Why it's there:** It makes the report state whether the data was refreshed at all.

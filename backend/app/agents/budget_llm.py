@@ -1,9 +1,9 @@
 import re
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, StringConstraints, ValidationError
 
 # the budget graph's two llm calls (spec: tpc-19): name an overspend's cause, then pick what to do.
 # the facts come from the privacy gateway as a json string; the model returns json that pydantic checks,
@@ -12,11 +12,11 @@ from pydantic import BaseModel, Field, ValidationError
 DIAGNOSE_PROMPT = (
     "You review one overspent budget category for a personal finance app. The facts below were computed "
     "from the user's transactions. Classify the cause as exactly one of these, checking them in this order:\n"
-    "1. recurring: a merchant that started recently and now charges every month: months_seen_before is 1 or 2 "
-    "and this_month is about its typical amount. A merchant with months_seen_before of 1 or more is NOT new, "
-    "even if this month's charge is large.\n"
-    "2. one_time: otherwise, one purchase at a merchant never seen before (months_seen_before is 0) that "
-    "explains most of the spending (share_of_spent above 0.5).\n"
+    "1. recurring: a merchant whose pattern is started_recently (it began charging since the budget was set "
+    "and now charges every month) explains much of the spending, at about its typical amount.\n"
+    "2. one_time: otherwise, the largest purchase explains most of the spending (share_of_spent above 0.5) "
+    "and its merchant's pattern is new, or it is far above what that merchant usually comes to (times_typical "
+    "of 2 or more). A big purchase at a regular shop is one_time, not recurring.\n"
     "3. seasonal: otherwise, spending spread across several purchases with no single one dominating, in a "
     "month with typical seasonal spending (holidays in November and December, back-to-school in August and "
     "September, summer travel). Use the month.\n"
@@ -26,7 +26,7 @@ DIAGNOSE_PROMPT = (
 
 DECIDE_PROMPT = (
     "You decide what a budgeting app does about one overspent category. Choose exactly one action:\n"
-    "- adjust_next_budget: the higher spending will continue (usually a recurring cause); propose next "
+    "- adjust_next_budget: only for a recurring cause, when the higher spending will continue; propose next "
     "month's limit as given.\n"
     "- alert: tell the user about an unusual purchase or burst (usually a one_time cause).\n"
     "- suggest_cuts: flexible spending running hot without one cause; suggest where to spend less.\n"
@@ -39,14 +39,18 @@ DECIDE_PROMPT = (
 _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
 
 
+# whitespace-only text counts as empty: a blank alert must never reach the user
+Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class Diagnosis(BaseModel):
     cause: Literal["one_time", "seasonal", "recurring"]
-    evidence: str = Field(min_length=1)
+    evidence: Text
 
 
 class Action(BaseModel):
     action: Literal["alert", "suggest_cuts", "adjust_next_budget", "no_op"]
-    message: str = Field(min_length=1)
+    message: Text
 
 
 # ollama's `format` constrains decoding to the schema; pydantic still checks the reply, and a bad reply gets
@@ -70,7 +74,12 @@ def diagnose_messages(context: str) -> list:
 
 def decide_messages(context: str, diagnosis: Optional[Diagnosis], projected_cents: int, proposed_cents: int) -> list:
     cause = f"{diagnosis.cause}: {diagnosis.evidence}" if diagnosis else "unknown (the cause could not be determined)"
+    # a holiday month or a one-off says nothing about next month, so only a recurring cause gets a proposal
+    if diagnosis and diagnosis.cause == "recurring":
+        proposal = f"${proposed_cents / 100:,.2f}"
+    else:
+        proposal = "none: adjust_next_budget is only for a recurring cause"
     return [SystemMessage(DECIDE_PROMPT), HumanMessage(
         f"Facts:\n{context}\n\nDiagnosis: {cause}\n"
         f"Projected spending by month end: ${projected_cents / 100:,.2f}\n"
-        f"Proposed limit for next month: ${proposed_cents / 100:,.2f}")]
+        f"Proposed limit for next month: {proposal}")]

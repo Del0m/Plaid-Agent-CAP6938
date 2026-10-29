@@ -23,6 +23,9 @@ class MerchantFact:
     charges: int                 # purchases this period
     prior_months: int            # how many of the 3 months before the period had spending here
     typical_cents: Optional[int] # median monthly spend here over those months, None if never seen
+    # named outright because a small model misread a count of 1 as "new": not seen before / seen in 1-2 of the
+    # last 3 months (started since the budget's history) / every month
+    pattern: Literal["new", "started_recently", "regular"]
 
 
 @dataclass(frozen=True)
@@ -39,6 +42,7 @@ class OverspendFacts:
     projected_cents: int
     largest: Optional[Txn]       # biggest purchase this period
     largest_share: float         # largest / spent, capped at 1 (a refund can make it bigger); 0 when nothing spent
+    largest_vs_typical: Optional[float]   # largest / its merchant's typical month; None for a merchant never seen
     merchants: tuple[MerchantFact, ...]   # top 5 by period spend, then name
     monthly_totals: tuple[int, ...]       # from the line's fit_json, oldest first
     outlier_months: tuple[date, ...]
@@ -48,11 +52,15 @@ def projected_cents(spent_cents: int, days_elapsed: int, days_in_period: int) ->
     return round_cents(Decimal(spent_cents) * days_in_period / days_elapsed)
 
 
-# flexible: where the month is heading, rounded up to $5. fixed: what the bill actually was
+# fixed: what the bill actually was. flexible: the old limit plus the typical month of any merchant that started
+# recently (a new gym), since a charge already posted would inflate a straight-line projection; with no such
+# merchant, where the month is heading. rounded up to $5. only used when the cause is recurring
 def proposed_limit_cents(facts: OverspendFacts) -> int:
     if facts.kind == "fixed":
         return facts.spent_cents
-    return -(-facts.projected_cents // PROPOSAL_STEP) * PROPOSAL_STEP
+    new = [m.typical_cents for m in facts.merchants if 1 <= m.prior_months < HISTORY_MONTHS and m.typical_cents]
+    base = facts.limit_cents + sum(new) if new else facts.projected_cents
+    return -(-base // PROPOSAL_STEP) * PROPOSAL_STEP
 
 
 def overspend_facts(flag: PaceResult, line_fit: Optional[dict], period_txns: Iterable[Txn],
@@ -70,6 +78,9 @@ def overspend_facts(flag: PaceResult, line_fit: Optional[dict], period_txns: Ite
     merchants = [_merchant_fact(name, period, history, hist_start)
                  for name in {t.merchant for t in period}]
     merchants.sort(key=lambda mf: (-mf.period_cents, mf.merchant or ""))
+    # a big one-off at a regular shop: far above what that merchant usually comes to in a month
+    typical = next((m.typical_cents for m in merchants if largest and m.merchant == largest.merchant), None)
+    vs_typical = largest.amount_cents / typical if largest and typical else None
 
     fit = line_fit or {}
     return OverspendFacts(
@@ -77,7 +88,7 @@ def overspend_facts(flag: PaceResult, line_fit: Optional[dict], period_txns: Ite
         limit_cents=flag.limit_cents, spent_cents=flag.spent_cents, pace=flag.pace,
         days_elapsed=flag.days_elapsed, days_in_period=flag.days_in_period,
         projected_cents=projected_cents(flag.spent_cents, flag.days_elapsed, flag.days_in_period),
-        largest=largest, largest_share=share, merchants=tuple(merchants[:TOP_MERCHANTS]),
+        largest=largest, largest_share=share, largest_vs_typical=vs_typical, merchants=tuple(merchants[:TOP_MERCHANTS]),
         monthly_totals=tuple(fit.get("monthly_totals", ())),
         outlier_months=tuple(date.fromisoformat(o["month"]) for o in fit.get("outliers", ())),
     )
@@ -96,4 +107,6 @@ def _merchant_fact(name: Optional[str], period: list[Txn], history: list[Txn], h
     typical = round_cents(Decimal(str(statistics.median(monthly)))) if monthly else None
     return MerchantFact(merchant=name, period_cents=sum(t.amount_cents for t in mine),
                         charges=sum(1 for t in mine if t.amount_cents > 0),
-                        prior_months=len(monthly), typical_cents=typical)
+                        prior_months=len(monthly), typical_cents=typical,
+                        pattern="new" if not monthly else "regular" if len(monthly) == HISTORY_MONTHS
+                        else "started_recently")

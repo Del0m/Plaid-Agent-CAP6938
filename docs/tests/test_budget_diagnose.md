@@ -66,6 +66,24 @@ Run them from `backend/`:
 
 ## `test_proposed_limit`
 
-**What it does:** A flexible projection of 15502¢ proposes $160, and one of exactly $155 stays at $155. A fixed line proposes what was actually spent.
+**What it does:** With no recently started merchant, a flexible projection of 15502¢ proposes $160, and one of exactly $155 stays at $155. A fixed line proposes what was actually spent.
 
 **Why it's there:** The code sets the number the user accepts, not the LLM. A round $5 figure is easy to read, and a fixed bill should follow the actual amount, as at period close.
+
+## `test_largest_vs_typical`
+
+**What it does:** A $520 purchase at a shop whose usual month is $120 is 4.33 times typical. A purchase at a merchant never seen before has no ratio.
+
+**Why it's there:** It was found in the TPC-19 review. A big one-off at a regular shop was called `recurring`, because "seen before" was the only signal. This ratio lets the model see that the purchase is far above that merchant's norm.
+
+## `test_recurring_proposal_adds_new_merchants_typical`
+
+**What it does:** For the gym user (a $42 limit; a $90 gym that started last month), the proposal is $135: the old limit plus the gym's typical month, rounded up to $5.
+
+**Why it's there:** It was found in the TPC-19 review. A straight-line projection proposed $205 for what is a steady $130 a month, because both charges had already posted by day 20. The proposal is what close applies if the user accepts it.
+
+## `test_merchant_pattern`
+
+**What it does:** Merchants are labelled `started_recently` (the gym, seen in 1 of the last 3 months), `regular` (the barber, seen in all 3) or `new` (a spa, never seen).
+
+**Why it's there:** In a live run, the model read "months_seen_before: 1" as "seen for the first time" and called the gym `one_time`. Naming the pattern in code removes that reading error, and the model still decides the cause.
