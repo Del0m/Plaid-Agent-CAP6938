@@ -88,3 +88,12 @@ def test_decide_messages_summarize_earlier_alerts():
     text = decide_messages("{}", None, 15500, 16000, "high", earlier)[-1].content
     assert "Earlier alerts for this category this month: 2, highest severity high" in text
     assert "Earlier alerts for this category this month: none" in decide_messages("{}", None, 1, 1, "high")[-1].content
+
+
+def test_decide_messages_flag_escalation():
+    earlier = [{"severity": "medium", "action": "alert", "status": "pending_user"}]
+    text = decide_messages("{}", None, 1, 1, "high", earlier)[-1].content
+    assert "Earlier alerts for this category this month: 1, highest severity medium" in text
+    assert "this flag is more severe: the user hasn't been told it is over the limit, so don't choose no_op" in text
+    same = decide_messages("{}", None, 1, 1, "medium", earlier)[-1].content
+    assert "more severe" not in same

@@ -9,9 +9,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from ..agents.budget_graph import plaid_sync, run_budget, waiting_for
+from ..agents.budget_graph import waiting_for
 from ..budget_engine.pace import BudgetLine as EngineLine, evaluate
-from ..budget_service.alerts import has_real_plaid_item
+from ..budget_service.daily import run_daily_locked, sim_today, user_lock
 from ..budget_service.initialize import load_txns
 from ..db.models import AdviceLog, AgentRun, BudgetPeriod, User
 from . import budget_hooks
@@ -25,16 +25,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["budget"])
 START_WAIT_SECONDS = 5.0
-
-# one run in flight per user, like chat: a run holds the local model. in-process, so one uvicorn worker
-_locks: dict[str, threading.Lock] = {}
-_locks_guard = threading.Lock()
-
-
-def _user_lock(user_id: str) -> threading.Lock:
-    with _locks_guard:
-        return _locks.setdefault(user_id, threading.Lock())
-
 
 def _today() -> Date:
     return Date.today()
@@ -84,9 +74,9 @@ class RunOut(BaseModel):
 # live pace, nothing written: the bars are current right after a sync, without waiting for the daily run
 @router.get("/budget", response_model=BudgetOut)
 def get_budget(user: User = Depends(get_current_user)):
-    today = _today()
-    days = calendar.monthrange(today.year, today.month)[1]
     with budget_hooks.session_factory() as s:
+        today = sim_today(s, user.id) or _today()      # a simulated user's dashboard follows the simulation
+        days = calendar.monthrange(today.year, today.month)[1]
         period = s.scalars(select(BudgetPeriod).where(BudgetPeriod.user_id == user.id)
                            .order_by(BudgetPeriod.start_date.desc()).limit(1)).first()
         if period is None or not (period.start_date <= today <= period.end_date):
@@ -107,7 +97,7 @@ def get_budget(user: User = Depends(get_current_user)):
 
 @router.post("/budget/run", status_code=202)
 def start_run(req: RunRequest, user: User = Depends(get_current_user)):
-    lock = _user_lock(user.id)
+    lock = user_lock(user.id)       # shared with the scheduler and simulated days
     if not lock.acquire(blocking=False):
         return JSONResponse({"detail": "A budget run is already in progress."}, status_code=409)
     factory = budget_hooks.session_factory
@@ -119,8 +109,8 @@ def start_run(req: RunRequest, user: User = Depends(get_current_user)):
 
     def work() -> None:
         try:
-            run_budget(factory, user.id, req.date or _today(), model=budget_hooks.make_model(), sync_fn=sync_fn,
-                       checkpointer=budget_hooks.get_checkpointer(), on_start=on_start)
+            run_daily_locked(factory, user.id, today, model=budget_hooks.make_model(),
+                             checkpointer=budget_hooks.get_checkpointer(), on_start=on_start)
         except Exception:
             logger.warning("budget run for a user failed", exc_info=True)   # a started run's row says error
             failed.append(True)
@@ -132,7 +122,7 @@ def start_run(req: RunRequest, user: User = Depends(get_current_user)):
     # run would get 409 until a restart
     try:
         with factory() as s:
-            sync_fn = plaid_sync if has_real_plaid_item(s, user.id) else None   # seeded users have nothing to sync
+            today = req.date or sim_today(s, user.id) or _today()
         _spawn(work)
     except Exception:
         lock.release()

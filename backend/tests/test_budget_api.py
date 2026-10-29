@@ -239,7 +239,8 @@ def test_run_202_then_ok(api):
 
 def test_run_409_while_locked(api):
     uid = api.seed("overspend-one-time")
-    lock = budget_api._user_lock(uid)
+    from app.budget_service.daily import user_lock
+    lock = user_lock(uid)
     lock.acquire()
     try:
         r = api.client.post("/budget/run", json={"date": "2026-10-20"})
@@ -259,7 +260,8 @@ def test_run_error_status(api):
 def test_run_syncs_only_real_items(api):
     uid = api.seed("overspend-one-time")
     calls = []
-    api.mp.setattr(budget_api, "plaid_sync", lambda s, user_id: calls.append(user_id) or {"items": 1, "errors": []})
+    from app.budget_service import daily
+    api.mp.setattr(daily, "plaid_sync", lambda s, user_id: calls.append(user_id) or {"items": 1, "errors": []})
     api.models.append(ScriptedChatModel(replies=[DIAG, ALERT]))
     wait(api, start(api))
     assert calls == []
@@ -302,10 +304,11 @@ def test_run_lock_released_when_start_fails(api):
     def broken(*a, **k):
         raise RuntimeError("database is locked")
 
-    api.mp.setattr(budget_api, "has_real_plaid_item", broken)
-    r = api.client.post("/budget/run", json={"date": "2026-10-20"})
+    api.mp.setattr(budget_api, "sim_today", broken)
+    r = api.client.post("/budget/run", json={})      # no date, so the route looks up the simulated one
     assert (r.status_code, r.json()["detail"]) == (500, "The budget run couldn't start.")
-    lock = budget_api._user_lock(uid)
+    from app.budget_service.daily import user_lock
+    lock = user_lock(uid)
     assert lock.acquire(blocking=False)        # free again, so the next run isn't stuck on 409
     lock.release()
 
@@ -345,3 +348,58 @@ def test_startup_closes_interrupted_runs(api):
     with api.db() as s:
         runs = {r.status: r.summary_json for r in s.query(AgentRun)}
     assert runs == {"error": {"error": "Interrupted"}, "awaiting_user": {}}
+
+
+
+# --- the simulated "today" (TPC-21) ---
+
+def seed_until(api, pid, until):
+    with api.db() as s:
+        uid = seed_profile(s, next(p for p in PLANTED if p.id == pid), until=until)
+    api.mp.setattr(config, "DEV_USER_EMAIL", f"{pid}@eval.local")
+    return uid
+
+
+def test_budget_uses_sim_date(api):
+    uid = seed_until(api, "overspend-one-time", date(2026, 10, 19))
+    run_budget(api.db, uid, date(2026, 10, 19), model=ScriptedChatModel(replies=[DIAG, ALERT]))
+    api.mp.setattr(budget_api, "_today", lambda: date(2026, 11, 30))
+    body = api.client.get("/budget").json()
+    assert body["period"] == {"start": "2026-10-01", "end": "2026-10-31"} and body["days_elapsed"] == 19
+
+
+def test_run_default_date_is_sim_date(api):
+    seed_until(api, "overspend-one-time", date(2026, 10, 19))
+    api.models.append(ScriptedChatModel(replies=[DIAG, ALERT]))
+    r = api.client.post("/budget/run", json={})
+    body = wait(api, r.json()["run_id"])
+    assert body["status"] == "ok"
+    with api.db() as s:
+        assert s.query(BudgetPeriod).one().start_date == date(2026, 10, 1)
+
+
+def test_budget_sim_date_past_period(api):
+    uid = seed_until(api, "overspend-one-time", date(2026, 10, 19))
+    run_budget(api.db, uid, date(2026, 10, 19), model=ScriptedChatModel(replies=[DIAG, ALERT]))
+    with api.db() as s:
+        from app.db.models import User
+        user = s.get(User, uid)
+        user.prefs_json = {"sim": {"profile": "overspend-one-time", "date": "2026-11-02"}}
+        s.commit()
+    body = api.client.get("/budget").json()
+    assert body["period"] is None and body["ended_period"] == {"start": "2026-10-01", "end": "2026-10-31"}
+
+
+
+def test_startup_closes_interrupted_simulation(api):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    uid = api.seed("overspend-one-time")
+    with api.db() as s:
+        s.add(AgentRun(user_id=uid, graph="simulate", status="running", summary_json={"days_done": 2}))
+        s.commit()
+    with TestClient(app):
+        pass
+    with api.db() as s:
+        row = s.query(AgentRun).filter_by(graph="simulate").one()
+    assert (row.status, row.summary_json) == ("error", {"error": "Interrupted"})

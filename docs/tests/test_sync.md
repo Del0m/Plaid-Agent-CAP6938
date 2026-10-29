@@ -24,7 +24,7 @@ Helpers in the test file:
   - Any response can be a `PlaidError`, which is raised instead of returned.
   - `fake.calls` records every path that was called.
 - **`account`, `txn`, `page`, `liabilities_response`:** build Plaid-shaped payloads with only the fields we read.
-- **`seed_item(db, ...)`:** writes a user and a linked item (with an encrypted token) straight to the db, skipping `/plaid/exchange`.
+- **`seed_item(db, ..., token=None)`:** writes a user and a linked item straight to the db, skipping `/plaid/exchange`. The item gets an encrypted token unless `token` gives the stored value, which is how the tests store a seeded user's placeholder or a token that won't decrypt.
 - **`run_sync`, `count`, `get_txn`, `get_item`:** run a sync and read rows back, each in its own session, the same way separate requests would.
 
 ---
@@ -97,6 +97,18 @@ It checks that `stale` was never written, that both fresh transactions were, and
 **What it does:** Syncs an item owned by a different user. It expects a 404 and checks that Plaid was never called.
 
 **Why it's there:** Item ids are sequential integers. Without the ownership check, any user could pull another user's bank data by guessing ids. Returning 404 instead of 403 also hides which ids exist.
+
+## `test_sync_route_refuses_seed_placeholder_item`
+
+**What it does:** Syncs a dev-user item whose token is `SEED_TOKEN` (`"x"`). It expects a 409 with the detail "This is a synthetic user with no bank link to sync." and checks that Plaid was never called.
+
+**Why it's there:** Seeded users (`scripts/seed_budget_user.py`) get a placeholder item so their accounts and transactions have a parent row, but there's no bank behind it. Syncing one used to try to decrypt `"x"`, which raised `InvalidToken` and returned a 500. The dashboard no longer offers Retry sync for these items, but the route still has to answer a direct call, such as one from `curl` or an old tab, with a clear message.
+
+## `test_sync_route_unreadable_token_is_409`
+
+**What it does:** Syncs a dev-user item whose stored token isn't a valid Fernet token. It expects a 409 with the detail "This bank link can't be read. Link the account again." and checks that Plaid was never called.
+
+**Why it's there:** A token that won't decrypt usually means `FERNET_KEY` changed or the row was edited. Retrying can't fix that, but linking the bank again stores a new token on the same row. The route used to let `InvalidToken` escape as a 500, and the page showed "Request failed (500)". With the 409, the page shows the detail text, which tells the user what to do.
 
 ## `test_webhook_triggers_sync`
 

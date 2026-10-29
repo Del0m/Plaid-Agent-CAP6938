@@ -430,11 +430,12 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-# a run's thread dies with the server (one worker, so no run survives a restart). left alone, its row would say
-# "running" forever; called at startup
+# a run's or a simulation's thread dies with the server (one worker, so none survives a restart). left alone, its
+# row would say "running" forever; called at startup
 def close_interrupted_runs(session_factory) -> int:
     with session_factory() as s:
-        stuck = s.scalars(select(AgentRun).where(AgentRun.graph == "budget", AgentRun.status == "running")).all()
+        stuck = s.scalars(select(AgentRun).where(AgentRun.graph.in_(("budget", "simulate")),
+                                                 AgentRun.status == "running")).all()
         for row in stuck:
             row.status, row.finished_at, row.summary_json = "error", utcnow(), {"error": "Interrupted"}
         s.commit()

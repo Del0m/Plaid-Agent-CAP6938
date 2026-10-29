@@ -166,7 +166,7 @@ Run them from `backend/`:
 
 ## `test_run_lock_released_when_start_fails`
 
-**What it does:** When starting a run fails (here the sync check raises), the request gets `500` "The budget run couldn't start.", and the user's run lock is free again.
+**What it does:** When starting a run fails (here, looking up the simulated date raises, for a run with no date), the request gets `500` "The budget run couldn't start.", and the user's run lock is free again.
 
 **Why it's there:** It was found in the TPC-20 review. The lock used to stay held, so every later run got `409` "already in progress" until the server restarted.
 
@@ -187,3 +187,31 @@ Run them from `backend/`:
 **What it does:** On startup, a budget run still marked `running` becomes `error` ("Interrupted"), and an `awaiting_user` run is left alone.
 
 **Why it's there:** It was found in the TPC-20 review. A run's thread dies with the server, and its row would otherwise say `running` forever, which keeps the page polling. A paused run doesn't need its thread; it lives in the checkpoint.
+
+## The simulated "today" (TPC-21)
+
+`seed_until(api, pid, until)` seeds a planted user as simulated from `until` and makes the API act as that user.
+
+## `test_budget_uses_sim_date`
+
+**What it does:** For a user simulated at Oct 19, `GET /budget` reports October's budget on day 19, even though the real date is patched to Nov 30.
+
+**Why it's there:** The dashboard of a simulated user follows the simulation, not the wall clock.
+
+## `test_run_default_date_is_sim_date`
+
+**What it does:** Running a check with no date, for a user simulated at Oct 19, runs it for Oct 19 (October's budget is created).
+
+**Why it's there:** The run button's blank date means "today", and a simulated user's today is the simulated date.
+
+## `test_budget_sim_date_past_period`
+
+**What it does:** For a simulated date of Nov 2 with only an October budget, `period` is `null` and `ended_period` is October.
+
+**Why it's there:** Simulating past the month end must show the same "your budget ended" message as real time (TPC-20). It mustn't judge November against October.
+
+## `test_startup_closes_interrupted_simulation`
+
+**What it does:** On startup, a simulation job still marked `running` becomes `error` ("Interrupted").
+
+**Why it's there:** A simulation's thread dies with the server, like a run's. Otherwise the Alerts panel would poll it forever.

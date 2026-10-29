@@ -7,6 +7,7 @@ from typing import Optional, Union
 from sqlalchemy.orm import Session
 
 from app.budget_engine.txns import add_months, month_start, round_cents
+from app.db.models import User
 from tests.factories import add_account, add_txn, add_user
 
 # synthetic users for the budget accuracy eval (spec: tpc-18). each is a few spending patterns run through a
@@ -83,14 +84,31 @@ def transactions(profile: Profile) -> list[tuple[date, int, str, str]]:
     return sorted(out)
 
 
-def seed_profile(session: Session, profile: Profile) -> str:
+# with `until`, only history up to that day goes in and the user lives on a simulated date from then on (tpc-21):
+# each advanced day injects the rest. ids are stable (sim-<profile>-<n>), so a day injected twice adds nothing
+def seed_profile(session: Session, profile: Profile, until: Optional[date] = None) -> str:
     user_id = f"budget-{profile.id}"
     item = add_user(session, user_id, f"{profile.id}@eval.local")
     acct = add_account(session, item, "Checking")
-    for day, cents, category, merchant in transactions(profile):
-        add_txn(session, acct, cents, category, merchant=merchant, day=day)
+    for n, (day, cents, category, merchant) in enumerate(transactions(profile)):
+        if until is None or day <= until:
+            add_txn(session, acct, cents, category, merchant=merchant, day=day, plaid_id=txn_id(profile, n))
+    if until is not None:
+        user = session.get(User, user_id)
+        user.prefs_json = {**(user.prefs_json or {}), "sim": {"profile": profile.id, "date": until.isoformat()}}
     session.commit()
     return user_id
+
+
+def txn_id(profile: Profile, n: int) -> str:
+    return f"sim-{profile.id}-{n}"
+
+
+# where a simulation starts: the day before the month the planted overspend happens in (the accuracy users,
+# which have no run date, the day before their scored month)
+def default_start(profile: Profile) -> date:
+    first = profile.run_date.replace(day=1) if profile.run_date else profile.today
+    return first - timedelta(days=1)
 
 
 RENT = Monthly("RENT_AND_UTILITIES", "Landlord", 150000)

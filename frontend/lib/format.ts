@@ -27,3 +27,10 @@ export function categoryLabel(category: string): string {
   const words = category.toLowerCase().replaceAll("_", " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+// days from an iso date to the last day of its month, at least 1 (on the last day, "to month end" is one day)
+export function daysToMonthEnd(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return Math.max(last - d, 1);
+}

@@ -3,8 +3,8 @@ from datetime import date
 from app.budget_engine.fit import fit_budget
 from app.budget_engine.pace import BudgetLine, evaluate
 from app.budget_engine.txns import Txn, month_start
-from app.db.models import Transaction
-from eval.budget_users import PLANTED, PROFILES, seed_profile, transactions
+from app.db.models import Transaction, User
+from eval.budget_users import PLANTED, PROFILES, default_start, seed_profile, transactions
 
 
 def profile(pid):
@@ -111,3 +111,52 @@ def test_planted_known_merchant_big_purchase():
 def test_profiles_unchanged():
     assert [p.id for p in PROFILES] == ["steady", "vacation", "early-rent", "rising", "occasional"]
     assert all(p.run_date is None for p in PROFILES)
+
+
+
+# --- seeding up to a start date (TPC-21) ---
+
+def seeded_rows(db, pid, until=None):
+    p = next(x for x in PLANTED + PROFILES if x.id == pid)
+    with db() as s:
+        uid = seed_profile(s, p, until=until)
+    with db() as s:
+        rows = s.query(Transaction).filter_by(user_id=uid).order_by(Transaction.id).all()
+        return p, rows, s.get(User, uid).prefs_json
+
+
+def test_seed_until_sets_sim(db):
+    p, rows, prefs = seeded_rows(db, "overspend-one-time", until=date(2026, 9, 30))
+    assert rows and max(r.date for r in rows) <= date(2026, 9, 30)
+    assert len(rows) == sum(1 for d, *_ in transactions(p) if d <= date(2026, 9, 30))
+    assert prefs["sim"] == {"profile": "overspend-one-time", "date": "2026-09-30"}
+
+
+def test_seed_without_until_unchanged(db):
+    p, rows, prefs = seeded_rows(db, "overspend-one-time")
+    assert "sim" not in (prefs or {}) and len(rows) == len(transactions(p))
+
+
+def test_seed_ids_stable(db):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.db.base import Base
+    _, first, _ = seeded_rows(db, "overspend-one-time")
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    other = sessionmaker(bind=engine, expire_on_commit=False)
+    _, second, _ = seeded_rows(other, "overspend-one-time")
+    assert [r.plaid_txn_id for r in first][:2] == ["sim-overspend-one-time-0", "sim-overspend-one-time-1"]
+    assert [r.plaid_txn_id for r in first] == [r.plaid_txn_id for r in second]
+
+
+def test_until_before_profile_start(db):
+    _, rows, prefs = seeded_rows(db, "overspend-one-time", until=date(2026, 6, 1))
+    assert rows == [] and prefs["sim"]["date"] == "2026-06-01"
+
+
+def test_default_start():
+    starts = {p.id: default_start(p) for p in PLANTED + PROFILES}
+    assert (starts["overspend-one-time"], starts["overspend-seasonal"], starts["steady"]) == (
+        date(2026, 9, 30), date(2026, 11, 30), date(2026, 7, 31))

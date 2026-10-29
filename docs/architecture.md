@@ -82,6 +82,7 @@ Refer to `system-design.png` while reading.
   - The header links to Alerts, with the pending count.
 - **Plaid Link widget:** `react-plaid-link`. Gets a `link_token` from the backend, returns a `public_token`. Bank credentials go to Plaid only.
 - **Chat UI** (`/chat`): streams tokens over Server-Sent Events from `POST /api/chat`. Shows which tools the agent called (✓/✗ chips) and lists the guidance it was given as clickable sources.
+- **Simulation panel** (on `/alerts`, TPC-21; only with `ENABLE_ADMIN` and a simulated user): the simulated date, **Advance 1 day**, **Advance 7 days** and **To month end**, with "Day N of M…" progress and the result.
 - **Alerts** (`/alerts`, TPC-20):
   - **Run budget check** (an optional date; blank means today) starts a run in the background, then polls it every 2 s. It reports alerts written, waiting for approval, no budget, or failed.
   - **Pending** alerts have Accept / Dismiss; decided ones are listed under **History**.
@@ -156,7 +157,9 @@ recurring_streams id, user_id, direction (in|out), merchant_key, merchant_name, 
 agent_runs       id, user_id, graph, started_at, finished_at, status, summary_json
 ```
 
-TPC-19 and TPC-20 additions:
+TPC-19, TPC-20 and TPC-21 additions:
+- `agent_runs.graph` is also `simulate` (an advance job, with its progress in `summary_json`) and `close` (the month-end slot; a recorded no-op, `status="skipped"`, until TPC-22).
+- `users.prefs_json["sim"] = {"profile", "date"}` marks a synthetic user living on a simulated date (TPC-21). The date is "today" for that user's dashboard and runs. The scheduler skips them.
 - `alerts.proposed_limit_cents`: set by code for `adjust_next_budget`.
 - `advice_log.alert_id` (FK): the alert the advice became, so the user's decision reaches it as `outcome`.
 - `agent_runs.status` adds `awaiting_user`: a run paused on a budget proposal.
@@ -294,6 +297,7 @@ Anything that changes the user's money or their budget without being asked goes 
   - A resume that fails while the thread is still paused leaves the run `awaiting_user`; only a run that got past the pause and then failed is `error`.
   - A new run id clears any old checkpoint thread first, because SQLite reuses deleted run ids.
   - At startup, budget runs left `running` by a stopped server become `error` ("Interrupted").
+- **Who starts a run (TPC-21):** the daily scheduler, the run button and each simulated day all go through `budget_service/daily.py` `run_daily`, behind one per-user lock, so they never overlap.
 - **Applying.** An accepted proposal isn't applied here. TPC-22's close applies `proposed_limit_cents`, and should treat a proposal never decided as dismissed.
 
 ---
@@ -445,7 +449,9 @@ POST /debt-plan                 { extra_monthly_cents, include_mortgage } -> ava
 POST /chat                      { thread_id, message } -> text/event-stream: sources, tool_call, tool_result, token, done | error
 GET  /chat/{thread_id}          -> the conversation so far, grouped into turns (tools and sources per answer)
 POST /admin/run/{graph}?user_id (dev only: trigger an agent run manually)
-POST /admin/sandbox/advance     (dev only: inject sandbox transactions, see 12)
+GET  /admin/sandbox              -> { simulated, profile, date }   (only with ENABLE_ADMIN; else 404)
+POST /admin/sandbox/advance      { days: 1-31 } -> 202 { job_id }; simulated users only (409 otherwise)
+GET  /admin/sandbox/advance/{id} -> { status, days_done, date, run_ids, alerts_written, error }
 ```
 
 ---
@@ -506,7 +512,23 @@ Only in Sandbox. Plaid's Transfer product needs separate approval for production
 
 ## 12. Development workflow tips
 
-- **Sandbox time travel:** Sandbox won't produce new transactions on its own the way a real bank does. For the daily loop, either call `/sandbox/transactions/create` (for dynamic sandbox users) or load the next day's slice from a synthetic fixture. Wrap both behind `POST /admin/sandbox/advance` so you can simulate a month in a minute.
+- **Time travel (as built, TPC-21):** synthetic users only.
+  1. `scripts/seed_budget_user.py --profile … --start default` seeds history up to the day before the planted month, and marks the user simulated.
+  2. Each advanced day (`scripts/simulate.py --user … --days N`, `POST /admin/sandbox/advance`, or the Alerts panel):
+     - injects that day's generated transactions (stable ids, so a retried day can't double up);
+     - records the month-end slot on the 1st;
+     - runs the real budget agent;
+     - then saves the date.
+
+  With `qwen2.5:14b`, a month takes minutes, not one: each flagged day makes two model calls. Plaid Sandbox's `/sandbox/transactions/create` isn't used.
+
+  **Demo, Sep 30 → Nov 1, one-time user:** 32 runs and 2 alerts: Oct 5, ahead of pace (the corner-shop weeks), and Oct 12, over the limit (the $600 purchase, an escalation the model reports). Nov 1 records October's close slot, then ends `period_ended` until TPC-22.
+- **Scheduler (TPC-21):** `ENABLE_SCHEDULER=1` starts APScheduler inside the API.
+  - Every day at `DAILY_RUN_TIME` (06:00), it runs each real user's budget check (anyone with a budget or a real Plaid item, not simulated users).
+  - On the 1st at `CLOSE_RUN_TIME` (05:00), it runs the month-end slot.
+  - Both are in `SCHEDULER_TZ`.
+  - The slots only fire while the server is up: APScheduler's misfire grace covers a busy server, not one that was down.
+  - So at startup, if today's slot has already passed, it runs once for users not yet checked today, and the month-end slot runs on the 1st for users not yet closed. Earlier days are never replayed.
 - **The UI demo (TPC-20):** seed a planted user, run the API as that user, and use the Alerts page:
 
   ```bash
@@ -560,7 +582,8 @@ plaid-agent/
 │       ├── privacy/             # gateway.py, scrub.py
 │       ├── budget_engine/       # fit.py, pace.py, close.py, recurring.py, forecast.py, payoff.py
 │       │                        # (pure functions, unit-tested)
-│       ├── budget_service/      # initialize.py: loads history, stores the fitted budget (db side)
+│       ├── budget_service/      # initialize.py (first budget), alerts.py (decisions), daily.py (one run per
+│       │                        # user behind a lock; close slot), simulate.py (advancing simulated users)
 │       ├── agents/
 │       │   ├── llm.py           # model wrapper
 │       │   ├── tools.py
@@ -715,6 +738,12 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-28 | `GET /budget` computes pace live and writes nothing | The bars are current right after a sync; stored values would be as old as the last run |
 | 2026-10-28 | `POST /budget/run` runs in a background thread and returns `202` with the run id; the page polls `GET /budget/runs/{id}` | The Next.js proxy drops a request after 30 s without a byte. FastAPI `BackgroundTasks` start after the response, which needs the run id |
 | 2026-10-28 | `DEV_USER_EMAIL` setting and a run button, for the demo until auth (and TPC-21's scheduler) | The UI can act as a seeded planted user; only the default dev user is ever auto-created, so a typo can't make a stray user |
+| 2026-10-29 | Advancing time is for synthetic users only: seeded up to a start date, then each day injects that day's generated transactions and runs the real agent; `/admin` routes need `ENABLE_ADMIN` | Advancing a real user would mix invented purchases into a real ledger. Synthetic data reproduces the planted overspends offline |
+| 2026-10-29 | Simulations run the real model in a background job; the 30-days-30-runs done-when is tested with a schema-aware fake model | A month takes minutes on `qwen2.5:14b`, but every run is the real agent; the user chose this over a model-free fast mode or code dedupe |
+| 2026-10-29 | In-process APScheduler 3.x, started only with `ENABLE_SCHEDULER`; daily run 06:00 and month-end slot 05:00 on the 1st, `America/New_York`; coalesced, 1 h misfire grace, no catch-up | Named by the ticket; quiet by default; fits the single worker; pace is about today, so replaying missed days would alert on stale data |
+| 2026-10-29 | One `run_daily` behind one per-user lock for the scheduler, the run button and simulated days | They can never overlap on one budget; a busy user is skipped by the scheduler that day |
+| 2026-10-29 | The month-end slot calls `close_month`, a recorded no-op until TPC-22 | Wiring and order (close before the 1st's run) are tested now. Note for TPC-22: the slot also fires for a month with no budget (a simulation's first day), and close should skip it |
+| 2026-10-29 | The decide prompt's summary line says when a flag is more severe than this month's earlier alerts | Live, the model let a pace warning stand when the category went over its limit, so the user was never told. With the note, the pace and over-limit alerts are both written, nothing repeats, and the TPC-19/20 live checks are unchanged |
 | | | |
 
 ---

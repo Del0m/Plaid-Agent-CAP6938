@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from ..budget_service.alerts import SEED_TOKEN
 from ..db.models import Account, Liability, PlaidItem, User
 from ..db.session import get_session
 from .deps import get_current_user
@@ -95,9 +96,11 @@ def get_dashboard(user: User = Depends(get_current_user), session: Session = Dep
     # avalanche order: highest APR first, unknown APR last, bigger balance first on a tie
     debt_rows.sort(key=lambda d: (d.apr is None, -(d.apr or 0), -(d.balance_cents or 0)))
 
-    # txn_cursor is only written by a finished transactions sync, so None = never synced
+    # txn_cursor is only written by a finished transactions sync, so None = never synced.
+    # a seeded user's placeholder item has no bank behind it, so a retry could never work
     unsynced = session.scalars(
-        select(PlaidItem).where(PlaidItem.user_id == user.id, PlaidItem.txn_cursor.is_(None)).order_by(PlaidItem.id)
+        select(PlaidItem).where(PlaidItem.user_id == user.id, PlaidItem.txn_cursor.is_(None),
+                                PlaidItem.access_token_enc != SEED_TOKEN).order_by(PlaidItem.id)
     ).all()
 
     return DashboardResponse(

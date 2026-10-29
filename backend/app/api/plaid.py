@@ -1,11 +1,13 @@
 import logging
 from typing import Optional
 import httpx
+from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from ..budget_service.alerts import SEED_TOKEN
 from ..db.models import PlaidItem, User
 from ..db.session import get_session
 from ..plaid_service import client as plaid
@@ -121,10 +123,16 @@ def sync_one_item(
     # someone else's item looks the same as a missing one, so ids can't be probed
     if item is None or item.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="item not found")
+    if item.access_token_enc == SEED_TOKEN:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="This is a synthetic user with no bank link to sync.")
     try:
         return sync_item(session, item)
     except (PlaidError, httpx.HTTPError) as err:
         raise _plaid_failure(err)
+    # the stored token won't decrypt (FERNET_KEY changed, row edited): only a new link fixes it
+    except InvalidToken:
+        logger.warning("access token for item %s can't be decrypted", item_id)
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="This bank link can't be read. Link the account again.")
 
 
 # plaid calls this, not a user, so there's no get_current_user.
