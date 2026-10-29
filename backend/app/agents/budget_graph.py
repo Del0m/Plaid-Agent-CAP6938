@@ -1,3 +1,5 @@
+import argparse
+import sys
 from dataclasses import asdict
 from datetime import date, timedelta
 from typing import Callable, Optional, TypedDict
@@ -239,3 +241,54 @@ def run_budget(session_factory, user_id: str, today: date, *, model: Optional[Ba
                 failed.status, failed.finished_at, failed.summary_json = "error", utcnow(), {"error": type(exc).__name__}
                 s.commit()
             raise
+
+
+def _money(cents: Optional[int]) -> str:
+    return "-" if cents is None else f"${cents / 100:,.2f}"
+
+
+def _print_report(state: dict) -> None:
+    print(f"run {state['run_id']}  status: {state['status']}  period: {state.get('period_id')}")
+    for r in state.get("results", []):
+        pace = "-" if r["pace"] is None else f"{r['pace']:.2f}"
+        mark = f"  FLAG ({r['reason']})" if r["flagged"] else ""
+        print(f"  {r['category']:<22} {r['kind']:<10} {_money(r['spent_cents']):>11} of "
+              f"{_money(r['limit_cents']):>11}  pace {pace}{mark}")
+    for flag in state.get("flags", []):
+        cat = flag["category"]
+        d, a = state["diagnoses"][cat], state["actions"][cat]
+        print(f"\n{cat} ({flag['reason']})")
+        print(f"  cause:  {d['cause']} - {d['evidence']}" if d else "  cause:  unknown (llm failed)")
+        print(f"  action: {a['action']}{' (fallback)' if a['fallback'] else ''}")
+        print(f"  message: {a['message']}")
+        if a["proposed_limit_cents"] is not None:
+            print(f"  proposed limit: {_money(a['proposed_limit_cents'])}")
+    unbudgeted = [r["category"] for r in state.get("results", []) if r["kind"] == "unbudgeted"]
+    print(f"\nalerts written: {len(state.get('alert_ids', []))}")
+    print(f"unbudgeted: {', '.join(unbudgeted) or 'none'}")
+    print(f"llm failures: {state.get('llm_failures', 0)}")
+
+
+# python -m app.agents.budget_graph --user <id> [--date YYYY-MM-DD] [--no-sync] [--model NAME], from backend/
+def main(argv=None, session_factory=None, model: Optional[BaseChatModel] = None) -> int:
+    parser = argparse.ArgumentParser(description="Run the budget agent once for one user.")
+    parser.add_argument("--user", required=True)
+    parser.add_argument("--date", type=date.fromisoformat, default=date.today(), help="YYYY-MM-DD, default today")
+    parser.add_argument("--no-sync", action="store_true", help="skip the plaid sync (synthetic users)")
+    parser.add_argument("--model", help="ollama model, default OLLAMA_MODEL")
+    args = parser.parse_args(argv)
+    if session_factory is None:
+        from app.db.session import SessionLocal
+        session_factory = SessionLocal
+    try:
+        state = run_budget(session_factory, args.user, args.date, model=model or get_chat_model(model=args.model),
+                           sync_fn=None if args.no_sync else plaid_sync)
+    except Exception as exc:
+        print(f"run failed: {type(exc).__name__}: {exc}")
+        return 1
+    _print_report(state)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
