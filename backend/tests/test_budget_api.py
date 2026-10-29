@@ -388,3 +388,18 @@ def test_budget_sim_date_past_period(api):
         s.commit()
     body = api.client.get("/budget").json()
     assert body["period"] is None and body["ended_period"] == {"start": "2026-10-01", "end": "2026-10-31"}
+
+
+
+def test_startup_closes_interrupted_simulation(api):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    uid = api.seed("overspend-one-time")
+    with api.db() as s:
+        s.add(AgentRun(user_id=uid, graph="simulate", status="running", summary_json={"days_done": 2}))
+        s.commit()
+    with TestClient(app):
+        pass
+    with api.db() as s:
+        row = s.query(AgentRun).filter_by(graph="simulate").one()
+    assert (row.status, row.summary_json) == ("error", {"error": "Interrupted"})

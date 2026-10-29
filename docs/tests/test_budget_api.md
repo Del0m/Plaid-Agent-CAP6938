@@ -209,3 +209,9 @@ Run them from `backend/`:
 **What it does:** For a simulated date of Nov 2 with only an October budget, `period` is `null` and `ended_period` is October.
 
 **Why it's there:** Simulating past the month end must show the same "your budget ended" message as real time (TPC-20). It mustn't judge November against October.
+
+## `test_startup_closes_interrupted_simulation`
+
+**What it does:** On startup, a simulation job still marked `running` becomes `error` ("Interrupted").
+
+**Why it's there:** A simulation's thread dies with the server, like a run's. Otherwise the Alerts panel would poll it forever.
