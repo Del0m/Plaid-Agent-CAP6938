@@ -64,6 +64,7 @@ class UnbudgetedOut(BaseModel):
 
 class BudgetOut(BaseModel):
     period: Optional[PeriodOut]
+    ended_period: Optional[PeriodOut]   # the latest budget, when today is past it (close hasn't opened the next)
     days_elapsed: int
     days_in_period: int
     lines: list[LineOut]
@@ -89,12 +90,15 @@ def get_budget(user: User = Depends(get_current_user)):
         period = s.scalars(select(BudgetPeriod).where(BudgetPeriod.user_id == user.id)
                            .order_by(BudgetPeriod.start_date.desc()).limit(1)).first()
         if period is None or not (period.start_date <= today <= period.end_date):
-            return BudgetOut(period=None, days_elapsed=today.day, days_in_period=days, lines=[], unbudgeted=[])
+            ended = PeriodOut(start=period.start_date, end=period.end_date) \
+                if period is not None and period.end_date < today else None
+            return BudgetOut(period=None, ended_period=ended, days_elapsed=today.day, days_in_period=days, lines=[],
+                             unbudgeted=[])
         results = evaluate([EngineLine(ln.category, ln.kind, ln.limit_cents) for ln in period.lines],
                            load_txns(s, user.id, period.start_date, today), today)
         out = PeriodOut(start=period.start_date, end=period.end_date)
     return BudgetOut(
-        period=out, days_elapsed=today.day, days_in_period=days,
+        period=out, ended_period=None, days_elapsed=today.day, days_in_period=days,
         lines=[LineOut(category=r.category, kind=r.kind, limit_cents=r.limit_cents, spent_cents=r.spent_cents,
                        pace=r.pace, flagged=r.flagged, reason=r.reason) for r in results if r.kind != "unbudgeted"],
         unbudgeted=[UnbudgetedOut(category=r.category, spent_cents=r.spent_cents)
@@ -107,9 +111,7 @@ def start_run(req: RunRequest, user: User = Depends(get_current_user)):
     if not lock.acquire(blocking=False):
         return JSONResponse({"detail": "A budget run is already in progress."}, status_code=409)
     factory = budget_hooks.session_factory
-    with factory() as s:
-        sync_fn = plaid_sync if has_real_plaid_item(s, user.id) else None   # seeded users have nothing to sync
-    started, run_ids = threading.Event(), []
+    started, run_ids, failed = threading.Event(), [], []
 
     def on_start(run_id: int) -> None:
         run_ids.append(run_id)
@@ -120,14 +122,28 @@ def start_run(req: RunRequest, user: User = Depends(get_current_user)):
             run_budget(factory, user.id, req.date or _today(), model=budget_hooks.make_model(), sync_fn=sync_fn,
                        checkpointer=budget_hooks.get_checkpointer(), on_start=on_start)
         except Exception:
-            logger.warning("budget run for a user failed", exc_info=True)   # the run row says error
+            logger.warning("budget run for a user failed", exc_info=True)   # a started run's row says error
+            failed.append(True)
         finally:
             started.set()
             lock.release()
 
-    _spawn(work)
+    # until the thread owns the lock, this request does: any failure here must hand it back, or every later
+    # run would get 409 until a restart
+    try:
+        with factory() as s:
+            sync_fn = plaid_sync if has_real_plaid_item(s, user.id) else None   # seeded users have nothing to sync
+        _spawn(work)
+    except Exception:
+        lock.release()
+        logger.warning("budget run couldn't start", exc_info=True)
+        return JSONResponse({"detail": "The budget run couldn't start."}, status_code=500)
     started.wait(START_WAIT_SECONDS)
-    return {"run_id": run_ids[0] if run_ids else None}
+    if run_ids:
+        return {"run_id": run_ids[0]}
+    if failed:      # it died before writing its run row, so there's nothing to poll
+        return JSONResponse({"detail": "The budget run couldn't start."}, status_code=500)
+    return {"run_id": None}
 
 
 @router.get("/budget/runs/{run_id}", response_model=RunOut)

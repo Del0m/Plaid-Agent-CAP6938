@@ -112,7 +112,8 @@ export type BudgetLine = {
 };
 
 export type Budget = {
-  period: { start: string; end: string } | null; // null: no budget covers today yet
+  period: { start: string; end: string } | null; // null: no budget covers today
+  ended_period: { start: string; end: string } | null; // the latest budget, when today is past it
   days_elapsed: number;
   days_in_period: number;
   lines: BudgetLine[];

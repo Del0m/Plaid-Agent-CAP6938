@@ -90,6 +90,36 @@ describe("Alerts page", () => {
     expect(await screen.findByText("The run failed (ConnectionError).")).toBeTruthy();
   });
 
+  test("a run that never finishes stops polling after 10 minutes", async () => {
+    render(<AlertsPage />);
+    await screen.findByText("Alert 2");
+    runMock.mockResolvedValue({ run_id: 7 });
+    getRunMock.mockResolvedValue(run({ status: "running" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run budget check" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000 + 5000);
+    });
+    expect(await screen.findByText("Still running. Check back later.")).toBeTruthy();
+    expect(getRunMock).toHaveBeenCalledTimes(300);
+  });
+
+  test("leaving the page stops polling", async () => {
+    const { unmount } = render(<AlertsPage />);
+    await screen.findByText("Alert 2");
+    runMock.mockResolvedValue({ run_id: 7 });
+    getRunMock.mockResolvedValue(run({ status: "running" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run budget check" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    const calls = getRunMock.mock.calls.length;
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20000);
+    });
+    expect(getRunMock.mock.calls.length).toBeLessThanOrEqual(calls + 1);
+  });
+
   test("409 shows message", async () => {
     render(<AlertsPage />);
     await screen.findByText("Alert 2");

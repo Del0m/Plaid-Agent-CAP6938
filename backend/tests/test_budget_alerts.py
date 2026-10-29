@@ -137,3 +137,17 @@ def test_has_real_plaid_item(db):
         s.query(PlaidItem).filter_by(user_id=uid).one().access_token_enc = "enc"
         s.commit()
         assert has_real_plaid_item(s, uid) is True
+
+
+def test_failed_resume_keeps_run_awaiting(db, tmp_path, monkeypatch):
+    # review finding: a resume that fails while the thread is still paused must leave the run waiting, not error
+    from app.agents import budget_graph
+
+    def broken(*a, **k):
+        raise RuntimeError("resume broke before running")
+
+    ck = InMemorySaver()
+    uid, aid, run_id = paused(db, tmp_path, ck)
+    monkeypatch.setattr(budget_graph, "Command", broken)
+    assert decide_alert(db, uid, aid, "accepted", checkpointer=ck, model=ScriptedChatModel(replies=[])).status == "accepted"
+    assert get(db, AgentRun, run_id).status == "awaiting_user"

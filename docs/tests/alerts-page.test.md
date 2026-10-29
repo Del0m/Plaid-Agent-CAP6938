@@ -52,6 +52,18 @@ npm test -- app/alerts/page.test.tsx
 
 **Why it's there:** An Ollama outage should be visible and named, not look like a quiet day.
 
+## `a run that never finishes stops polling after 10 minutes`
+
+**What it does:** If the run stays `running`, the page polls 300 times (10 minutes), then says "Still running. Check back later." and frees the button.
+
+**Why it's there:** It was found in the TPC-20 review: a run whose server stopped never finishes, and the page used to spin forever.
+
+## `leaving the page stops polling`
+
+**What it does:** After the page is closed mid-run, it stops asking about the run.
+
+**Why it's there:** A loop left running after the user navigates away would keep hitting the API, and would try to update a page that's gone.
+
 ## `409 shows message`
 
 **What it does:** When a run is already in progress, the page shows the server's message.

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AlertCard from "@/components/AlertCard";
 import {
   acceptAlert, dismissAlert, errorMessage, getAlerts, getRun, runBudget, type Alert, type RunStatus,
@@ -9,6 +9,8 @@ import {
 
 // a run can outlast the proxy's 30 s, so it runs in the background and the page asks how it's going
 const POLL_MS = 2000;
+// a run whose server stopped never finishes; give up after 10 minutes instead of spinning forever
+const MAX_POLLS = 300;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -38,6 +40,14 @@ export default function AlertsPage() {
   // bumping this re-runs the fetch effect below
   const [reloadKey, setReloadKey] = useState(0);
   const load = useCallback(() => setReloadKey((k) => k + 1), []);
+  // false once the page is left, so an unfinished poll loop stops instead of running in the background
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false; // drop a response that arrives after a newer fetch started
@@ -62,12 +72,15 @@ export default function AlertsPage() {
         setResult("The run started but hasn't reported back yet. Refresh in a moment.");
         return;
       }
-      let status: RunStatus;
-      do {
+      let status: RunStatus | null = null;
+      for (let i = 0; i < MAX_POLLS && mounted.current; i++) {
         await sleep(POLL_MS);
+        if (!mounted.current) return;
         status = await getRun(run_id);
-      } while (status.status === "running");
-      setResult(resultLine(status));
+        if (status.status !== "running") break;
+      }
+      if (!mounted.current) return;
+      setResult(status && status.status !== "running" ? resultLine(status) : "Still running. Check back later.");
     } catch (err) {
       setResult(errorMessage(err));
     } finally {

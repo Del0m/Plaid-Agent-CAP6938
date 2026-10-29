@@ -11,7 +11,7 @@ import PlaidLinkButton from "@/components/PlaidLinkButton";
 import {
   errorMessage, getAlerts, getBudget, getDashboard, syncItem, type Budget, type Dashboard, type ExchangeResult,
 } from "@/lib/api";
-import { categoryLabel, formatCents } from "@/lib/format";
+import { categoryLabel, formatCents, formatDate } from "@/lib/format";
 
 function Card({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -189,6 +189,10 @@ export default function DashboardPage() {
               <p className="text-sm text-red-600 dark:text-red-400">Couldn&apos;t load your budget: {budgetError}</p>
             ) : !budget ? (
               <p className="text-sm text-neutral-500">Loading…</p>
+            ) : budget.period === null && budget.ended_period ? (
+              <p className="text-sm text-neutral-500">
+                Your budget ended on {formatDate(budget.ended_period.end)}. The next month opens when the period closes.
+              </p>
             ) : budget.period === null ? (
               <p className="text-sm text-neutral-500">No budget yet. Run a budget check from Alerts.</p>
             ) : (

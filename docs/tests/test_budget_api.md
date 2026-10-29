@@ -163,3 +163,27 @@ Run them from `backend/`:
 **What it does:** `{"date": "2026-13-01"}` gives `422`.
 
 **Why it's there:** A bad date fails before anything runs.
+
+## `test_run_lock_released_when_start_fails`
+
+**What it does:** When starting a run fails (here the sync check raises), the request gets `500` "The budget run couldn't start.", and the user's run lock is free again.
+
+**Why it's there:** It was found in the TPC-20 review. The lock used to stay held, so every later run got `409` "already in progress" until the server restarted.
+
+## `test_run_that_never_started_is_500`
+
+**What it does:** When the run fails before writing its run row (the model can't be created), the request gets `500` instead of `202` with no id.
+
+**Why it's there:** It was found in the TPC-20 review. A `202` with no id made the page say the run "hasn't reported back yet", for a run that never existed.
+
+## `test_budget_ended_period_reported`
+
+**What it does:** On Nov 3, with only an October budget, `period` is `null` and `ended_period` is October's dates. On Oct 20, `ended_period` is `null`.
+
+**Why it's there:** It was found in the TPC-20 review. The dashboard used to say "No budget yet" for a budget that exists but has ended, which pointed the user at a run that can't help. It now says when the budget ended.
+
+## `test_startup_closes_interrupted_runs`
+
+**What it does:** On startup, a budget run still marked `running` becomes `error` ("Interrupted"), and an `awaiting_user` run is left alone.
+
+**Why it's there:** It was found in the TPC-20 review. A run's thread dies with the server, and its row would otherwise say `running` forever, which keeps the page polling. A paused run doesn't need its thread; it lives in the checkpoint.

@@ -290,6 +290,10 @@ Anything that changes the user's money or their budget without being asked goes 
   2. then resumes the run with `Command(resume=[alert_id, decision])`. A pair, because LangGraph reads a dict resume value as interrupt id → value.
 
   Decisions can arrive in any order. The run finishes once all are in, recording them in its summary. If the resume fails, the decision is still saved, and the run stays `awaiting_user`.
+- **Failures and restarts:**
+  - A resume that fails while the thread is still paused leaves the run `awaiting_user`; only a run that got past the pause and then failed is `error`.
+  - A new run id clears any old checkpoint thread first, because SQLite reuses deleted run ids.
+  - At startup, budget runs left `running` by a stopped server become `error` ("Interrupted").
 - **Applying.** An accepted proposal isn't applied here. TPC-22's close applies `proposed_limit_cents`, and should treat a proposal never decided as dismissed.
 
 ---

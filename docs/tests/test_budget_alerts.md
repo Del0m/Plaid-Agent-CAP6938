@@ -80,3 +80,9 @@ Run them from `backend/`:
 **What it does:** A seeded user (placeholder token `"x"`) has no real Plaid item. After the token changes, it does.
 
 **Why it's there:** `POST /budget/run` only syncs users with a real item. A seeded user's fake token would just record a sync error on every run.
+
+## `test_failed_resume_keeps_run_awaiting`
+
+**What it does:** When the resume fails before anything runs (the thread is still paused), the decision is saved and the run stays `awaiting_user`.
+
+**Why it's there:** It was found in the TPC-20 review. The spec said both "a failed resume leaves the run waiting" and "a failed resume marks it error". The rule now: a run still paused keeps waiting, along with its other proposals, and can be resumed again. Only a run that got past the pause and then failed is `error`.

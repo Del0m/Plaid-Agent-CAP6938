@@ -133,6 +133,17 @@ Run them from `backend/`:
 
 **Why it's there:** The Alerts page lets the user decide in any order, so the run can't assume the order it asked in. Each resume carries an `[alert_id, decision]` pair, not a dict, because LangGraph reads a dict resume as interrupt id → value.
 
+## `test_reused_run_id_starts_clean`
+
+**What it does:**
+1. A paused run is accepted.
+2. The user is deleted and seeded again, which is what `seed_budget_user.py --replace` does.
+3. A new run is started.
+
+SQLite gives the new run the same id, and it still pauses, with its alert pending.
+
+**Why it's there:** It was found in the TPC-20 review. Checkpoints are stored under `budget-<run_id>`, and the old thread's `decisions` used to carry into the reused id, so the run skipped the pause and recorded an approval the user never gave. `run_budget` now clears any thread for a new run id before it starts.
+
 ## `test_alert_only_never_pauses`
 
 **What it does:** A run whose only action is a plain `alert` finishes `ok`, even with a checkpointer.

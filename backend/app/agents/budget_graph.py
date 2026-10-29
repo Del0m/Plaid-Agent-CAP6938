@@ -322,6 +322,10 @@ def run_budget(session_factory, user_id: str, today: date, *, model: Optional[Ba
         s.add(run)
         s.commit()
         run_id = run.id
+    if checkpointer is not None:
+        # sqlite reuses the id of a deleted run (seed --replace), and a thread left from that run would hand its
+        # decisions to this one, skipping the pause. a new run id never has history of its own
+        checkpointer.delete_thread(_thread(run_id)["configurable"]["thread_id"])
     if on_start is not None:
         on_start(run_id)        # the api answers with the id while the run goes on in the background
     with session_factory() as gs:
@@ -349,7 +353,10 @@ def resume_budget_run(session_factory, run_id: int, alert_id: int, decision: str
     try:
         result = graph.invoke(Command(resume=[alert_id, decision]), _thread(run_id))
     except Exception as exc:
-        _mark(session_factory, run_id, "error", {"error": type(exc).__name__})
+        # still paused means nothing ran: the run keeps waiting (its other proposals too) and can be resumed
+        # again. only a run that got past the pause and then failed is an error
+        if not waiting_for(session_factory, checkpointer, run_id):
+            _mark(session_factory, run_id, "error", {"error": type(exc).__name__})
         raise
     waiting = _interrupted(result)
     if waiting is not None:
@@ -421,3 +428,14 @@ def main(argv=None, session_factory=None, model: Optional[BaseChatModel] = None)
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# a run's thread dies with the server (one worker, so no run survives a restart). left alone, its row would say
+# "running" forever; called at startup
+def close_interrupted_runs(session_factory) -> int:
+    with session_factory() as s:
+        stuck = s.scalars(select(AgentRun).where(AgentRun.graph == "budget", AgentRun.status == "running")).all()
+        for row in stuck:
+            row.status, row.finished_at, row.summary_json = "error", utcnow(), {"error": "Interrupted"}
+        s.commit()
+        return len(stuck)

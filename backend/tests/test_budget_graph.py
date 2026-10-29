@@ -232,6 +232,24 @@ def test_two_adjusts_any_order(db, tmp_path):
     assert rows(db, AgentRun)[0].summary_json["decisions"] == {str(first): "accepted", str(second): "dismissed"}
 
 
+def test_reused_run_id_starts_clean(db, tmp_path):
+    # review finding: seed --replace deletes the runs, sqlite reuses id 1, and the new run used to pick up the
+    # old checkpoint thread (its decisions), skipping the pause and recording a decision nobody made
+    from scripts.seed_budget_user import delete_user
+    ck = InMemorySaver()
+    uid = seed(db, "overspend-recurring")
+    first = run(db, uid, model=fake(RECUR, ADJUST), tmp_path=tmp_path, checkpointer=ck)
+    [alert] = rows(db, Alert)
+    resume_budget_run(db, first["run_id"], alert.id, "accepted", checkpointer=ck, model=fake())
+    with db() as s:
+        delete_user(s, uid)
+    uid = seed(db, "overspend-recurring")
+    again = run(db, uid, model=fake(RECUR, ADJUST), tmp_path=tmp_path, checkpointer=ck)
+    assert again["run_id"] == first["run_id"]            # the id really is reused
+    assert again["status"] == "awaiting_user"
+    assert [a.status for a in rows(db, Alert)] == ["pending_user"]
+
+
 def test_alert_only_never_pauses(db, tmp_path):
     uid = seed(db, "overspend-one-time")
     assert run(db, uid, model=fake(DIAG, ALERT), tmp_path=tmp_path, checkpointer=InMemorySaver())["status"] == "ok"

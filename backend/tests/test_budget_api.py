@@ -292,3 +292,56 @@ def test_run_other_users_404(api):
 def test_run_bad_date_422(api):
     api.seed("overspend-one-time")
     assert api.client.post("/budget/run", json={"date": "2026-13-01"}).status_code == 422
+
+
+# --- review fixes ---
+
+def test_run_lock_released_when_start_fails(api):
+    uid = api.seed("overspend-one-time")
+
+    def broken(*a, **k):
+        raise RuntimeError("database is locked")
+
+    api.mp.setattr(budget_api, "has_real_plaid_item", broken)
+    r = api.client.post("/budget/run", json={"date": "2026-10-20"})
+    assert (r.status_code, r.json()["detail"]) == (500, "The budget run couldn't start.")
+    lock = budget_api._user_lock(uid)
+    assert lock.acquire(blocking=False)        # free again, so the next run isn't stuck on 409
+    lock.release()
+
+
+def test_run_that_never_started_is_500(api):
+    api.seed("overspend-one-time")
+
+    def no_model():
+        raise RuntimeError("ollama client misconfigured")
+
+    api.mp.setattr(budget_hooks, "make_model", no_model)
+    r = api.client.post("/budget/run", json={"date": "2026-10-20"})
+    assert (r.status_code, r.json()["detail"]) == (500, "The budget run couldn't start.")
+
+
+def test_budget_ended_period_reported(api):
+    uid = api.seed("overspend-one-time")
+    api.run(uid, DIAG, ALERT)
+    api.mp.setattr(budget_api, "_today", lambda: date(2026, 11, 3))
+    body = api.client.get("/budget").json()
+    assert body["period"] is None
+    assert body["ended_period"] == {"start": "2026-10-01", "end": "2026-10-31"}
+    api.mp.setattr(budget_api, "_today", lambda: ONE)
+    assert api.client.get("/budget").json()["ended_period"] is None
+
+
+def test_startup_closes_interrupted_runs(api):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    uid = api.seed("overspend-one-time")
+    with api.db() as s:
+        s.add_all([AgentRun(user_id=uid, graph="budget", status="running"),
+                   AgentRun(user_id=uid, graph="budget", status="awaiting_user")])
+        s.commit()
+    with TestClient(app):          # runs the app's startup
+        pass
+    with api.db() as s:
+        runs = {r.status: r.summary_json for r in s.query(AgentRun)}
+    assert runs == {"error": {"error": "Interrupted"}, "awaiting_user": {}}
