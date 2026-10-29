@@ -21,6 +21,8 @@ Run them from `backend/`:
   - puts the prompt audit log in `tmp_path`.
 - **`api.seed(pid)`** seeds a planted user and sets `DEV_USER_EMAIL` to its `<pid>@eval.local`, so the API acts as that user.
 - **`api.run(uid, *replies, checkpointer=None)`** runs the budget agent directly on Oct 20 2026 with scripted replies.
+- **The fixture makes `POST /budget/run` run inline** (it patches `budget._spawn`). The in-memory test database is a single SQLite connection, and a background thread and the polling requests can't use it at the same time. The threaded path is exercised against a real server in the TPC-20 demo.
+- **`start(api, date)`** posts a run and returns its id; **`wait(api, run_id)`** polls `GET /budget/runs/{id}` until it isn't `running`.
 
 ---
 
@@ -95,3 +97,69 @@ Run them from `backend/`:
 **What it does:** With the default `dev@localhost`, the user is created on first request, as before.
 
 **Why it's there:** Plaid linking and the dashboard rely on the dev user existing on a fresh database.
+
+## `test_budget_lines_match_evaluate`
+
+**What it does:** After a run creates October's budget, `GET /budget` on Oct 20 returns the period, day 20 of 31, and one line per budgeted category. Their spent, limit, flag and reason equal `evaluate` over the same transactions.
+
+**Why it's there:** The dashboard's pace bars must show the same numbers the agent judges by, computed live.
+
+## `test_budget_no_period_null`
+
+**What it does:** With no budget yet, `period` is `null` and the lists are empty.
+
+**Why it's there:** The dashboard shows "No budget yet" instead of an error.
+
+## `test_budget_period_over_is_null`
+
+**What it does:** On Nov 3, with only an October budget, `period` is `null`.
+
+**Why it's there:** November's spending must not be drawn against October's limits (plan Review Focus 3). Opening November is period close's job.
+
+## `test_budget_writes_nothing`
+
+**What it does:** A `GET /budget` leaves every line's stored spent and pace, and the run and alert counts, unchanged.
+
+**Why it's there:** Reloading the dashboard is safe, and only a real run updates the stored budget.
+
+## `test_run_202_then_ok`
+
+**What it does:** `POST /budget/run` answers `202` with a run id. The run then reads `ok`, with one alert and no error.
+
+**Why it's there:** The page starts a run, then polls it, because the Next.js proxy drops a request after 30 s of silence.
+
+## `test_run_409_while_locked`
+
+**What it does:** While the user's run lock is held, a second run gets `409` "A budget run is already in progress.".
+
+**Why it's there:** A run holds the local model for tens of seconds. A double click must not start two.
+
+## `test_run_error_status`
+
+**What it does:** When the model raises, the run reads `error` with `ConnectionError`, and the next run can start (the lock was released).
+
+**Why it's there:** The page can say the run failed and why, and a failure doesn't lock the user out.
+
+## `test_run_syncs_only_real_items`
+
+**What it does:** A seeded user isn't synced. After its item gets a real-looking token, the next run syncs it.
+
+**Why it's there:** A seeded user's placeholder token would only record a sync error on every run, and real users must still be synced before the check.
+
+## `test_run_awaiting_user`
+
+**What it does:** The gym user's run reads `awaiting_user`, waiting on its one alert.
+
+**Why it's there:** The page shows "Waiting for your approval" from this.
+
+## `test_run_other_users_404`
+
+**What it does:** Another user's run id gives `404` "Run not found.".
+
+**Why it's there:** One user can't watch another's runs.
+
+## `test_run_bad_date_422`
+
+**What it does:** `{"date": "2026-13-01"}` gives `422`.
+
+**Why it's there:** A bad date fails before anything runs.

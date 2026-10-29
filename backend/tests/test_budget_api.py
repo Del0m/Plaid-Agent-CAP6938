@@ -35,6 +35,10 @@ def api(client, db, monkeypatch, tmp_path):
     monkeypatch.setattr(budget_hooks, "get_checkpointer", lambda: ck)
     monkeypatch.setattr(budget_hooks, "make_model", lambda: models.pop(0) if models else ScriptedChatModel(replies=[]))
     monkeypatch.setattr(config, "PROMPT_AUDIT_PATH", tmp_path / "audit.jsonl")
+    # runs finish before POST /budget/run returns: the in-memory test db is one sqlite connection, which a
+    # background thread and the polling requests can't use at the same time
+    from app.api import budget as budget_routes
+    monkeypatch.setattr(budget_routes, "_spawn", lambda work: work())
 
     def seed(pid):
         with db() as s:
@@ -156,3 +160,135 @@ def test_default_dev_user_still_created(api):
     assert api.client.get("/alerts").status_code == 200
     with api.db() as s:
         assert s.query(User).filter_by(email="dev@localhost").count() == 1
+
+
+# --- /budget and background runs ---
+
+from app.api import budget as budget_api
+from app.budget_engine.pace import BudgetLine as EngineLine, evaluate
+from app.budget_service.initialize import load_txns
+from app.db.models import AgentRun, BudgetLine, BudgetPeriod, PlaidItem
+
+
+def wait(api, run_id, timeout=10.0):
+    import time
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        body = api.client.get(f"/budget/runs/{run_id}").json()
+        if body["status"] != "running":
+            return body
+        time.sleep(0.05)
+    raise AssertionError("run never finished")
+
+
+def start(api, when="2026-10-20"):
+    r = api.client.post("/budget/run", json={"date": when})
+    assert r.status_code == 202, r.text
+    return r.json()["run_id"]
+
+
+def test_budget_lines_match_evaluate(api):
+    uid = api.seed("overspend-one-time")
+    api.run(uid, DIAG, ALERT)
+    api.mp.setattr(budget_api, "_today", lambda: ONE)
+    body = api.client.get("/budget").json()
+    with api.db() as s:
+        period = s.query(BudgetPeriod).one()
+        expected = evaluate([EngineLine(ln.category, ln.kind, ln.limit_cents) for ln in period.lines],
+                            load_txns(s, uid, period.start_date, ONE), ONE)
+    assert body["period"] == {"start": "2026-10-01", "end": "2026-10-31"}
+    assert (body["days_elapsed"], body["days_in_period"]) == (20, 31)
+    budgeted = [r for r in expected if r.kind != "unbudgeted"]
+    assert [(ln["category"], ln["spent_cents"], ln["limit_cents"], ln["flagged"], ln["reason"]) for ln in body["lines"]] \
+        == [(r.category, r.spent_cents, r.limit_cents, r.flagged, r.reason) for r in budgeted]
+
+
+def test_budget_no_period_null(api):
+    api.seed("overspend-one-time")
+    api.mp.setattr(budget_api, "_today", lambda: ONE)
+    body = api.client.get("/budget").json()
+    assert (body["period"], body["lines"], body["unbudgeted"]) == (None, [], [])
+
+
+def test_budget_period_over_is_null(api):
+    uid = api.seed("overspend-one-time")
+    api.run(uid, DIAG, ALERT)
+    api.mp.setattr(budget_api, "_today", lambda: date(2026, 11, 3))
+    assert api.client.get("/budget").json()["period"] is None
+
+
+def test_budget_writes_nothing(api):
+    uid = api.seed("overspend-one-time")
+    api.run(uid, DIAG, ALERT)
+    api.mp.setattr(budget_api, "_today", lambda: date(2026, 10, 25))
+    with api.db() as s:
+        before = [(ln.spent_cents, ln.last_pace) for ln in s.query(BudgetLine).order_by(BudgetLine.id)]
+        counts = (s.query(AgentRun).count(), s.query(Alert).count())
+    api.client.get("/budget")
+    with api.db() as s:
+        assert [(ln.spent_cents, ln.last_pace) for ln in s.query(BudgetLine).order_by(BudgetLine.id)] == before
+        assert (s.query(AgentRun).count(), s.query(Alert).count()) == counts
+
+
+def test_run_202_then_ok(api):
+    api.seed("overspend-one-time")
+    api.models.append(ScriptedChatModel(replies=[DIAG, ALERT]))
+    body = wait(api, start(api))
+    assert (body["status"], len(body["alert_ids"]), body["waiting_for"], body["error"]) == ("ok", 1, [], None)
+
+
+def test_run_409_while_locked(api):
+    uid = api.seed("overspend-one-time")
+    lock = budget_api._user_lock(uid)
+    lock.acquire()
+    try:
+        r = api.client.post("/budget/run", json={"date": "2026-10-20"})
+        assert (r.status_code, r.json()["detail"]) == (409, "A budget run is already in progress.")
+    finally:
+        lock.release()
+
+
+def test_run_error_status(api):
+    api.seed("overspend-one-time")
+    api.models.append(ScriptedChatModel(replies=[ConnectionError("down")]))
+    body = wait(api, start(api))
+    assert (body["status"], body["error"]) == ("error", "ConnectionError")
+    assert api.client.post("/budget/run", json={"date": "2026-10-20"}).status_code == 202   # lock released
+
+
+def test_run_syncs_only_real_items(api):
+    uid = api.seed("overspend-one-time")
+    calls = []
+    api.mp.setattr(budget_api, "plaid_sync", lambda s, user_id: calls.append(user_id) or {"items": 1, "errors": []})
+    api.models.append(ScriptedChatModel(replies=[DIAG, ALERT]))
+    wait(api, start(api))
+    assert calls == []
+    with api.db() as s:
+        s.query(PlaidItem).filter_by(user_id=uid).one().access_token_enc = "enc"
+        s.commit()
+    api.models.append(ScriptedChatModel(replies=[DIAG, reply(action="no_op", message="Already told you.")]))
+    wait(api, start(api))
+    assert calls == [uid]
+
+
+def test_run_awaiting_user(api):
+    api.seed("overspend-recurring")
+    api.models.append(ScriptedChatModel(replies=[RECUR, ADJUST]))
+    body = wait(api, start(api))
+    assert body["status"] == "awaiting_user", body
+    assert body["waiting_for"] == body["alert_ids"] and len(body["alert_ids"]) == 1
+
+
+def test_run_other_users_404(api):
+    api.seed("overspend-recurring")
+    api.models.append(ScriptedChatModel(replies=[RECUR, ADJUST]))
+    run_id = start(api)
+    wait(api, run_id)
+    api.seed("overspend-one-time")
+    r = api.client.get(f"/budget/runs/{run_id}")
+    assert (r.status_code, r.json()["detail"]) == (404, "Run not found.")
+
+
+def test_run_bad_date_422(api):
+    api.seed("overspend-one-time")
+    assert api.client.post("/budget/run", json={"date": "2026-13-01"}).status_code == 422
