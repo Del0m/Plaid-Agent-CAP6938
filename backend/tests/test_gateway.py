@@ -5,7 +5,10 @@ import pytest
 
 from tests.factories import add_account, add_txn, add_user
 from app.privacy import gateway as gw
-from app.privacy.gateway import ACCOUNT_FIELDS, DEBT_FIELDS, TXN_FIELDS, PrivacyGateway
+from app.budget_engine.diagnose import overspend_facts
+from app.budget_engine.pace import PaceResult
+from app.budget_engine.txns import Txn
+from app.privacy.gateway import ACCOUNT_FIELDS, DEBT_FIELDS, DIAGNOSE_FIELDS, TXN_FIELDS, PrivacyGateway
 
 TODAY = date(2026, 10, 21)
 PII = ["Jane", "Doe", "jane.doe@example.com", "4321", "acc-secret-1", "item-secret-1", "u-jane"]
@@ -225,3 +228,60 @@ def test_unknown_purpose_raises(db, tmp_path):
     with db() as s:
         with pytest.raises(ValueError):
             PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl").build_context("transactions")
+
+
+
+# --- purpose "diagnose" (TPC-19) ---
+
+GM = "GENERAL_MERCHANDISE"
+OCT = date(2026, 10, 1)
+
+
+def gm(day, cents, merchant="Shop", cat=GM):
+    return Txn(date=date(2026, 10, day), amount_cents=cents, category=cat, merchant=merchant)
+
+
+def diagnose_prompt(db, tmp_path, txns, audit="a.jsonl"):
+    spent = sum(t.amount_cents for t in txns if t.category == GM)
+    flag = PaceResult(category=GM, kind="flexible", limit_cents=15750, spent_cents=spent, days_elapsed=20,
+                      days_in_period=31, pace=None, flagged=True, reason="over_limit")
+    facts = overspend_facts(flag, {"monthly_totals": [15000, 14800, 15200], "outliers": []}, txns, [], OCT)
+    uid = seed_pii_user(db)
+    with db() as s:
+        g = PrivacyGateway(s, uid, audit_path=tmp_path / audit)
+        return g, g.build_context("diagnose", facts=facts, transactions=txns)
+
+
+def test_diagnose_allowlist(db, tmp_path):
+    _, prompt = diagnose_prompt(db, tmp_path, [gm(12, 60000, "ElectroMart"), gm(5, 3500)])
+    d = data(prompt)
+    assert set(d) == set(DIAGNOSE_FIELDS)
+    assert (d["limit"], d["spent"], d["month"], d["day"], d["days_in_month"]) == (157.5, 635.0, "October 2026", 20, 31)
+    assert d["largest"] == {"date": "2026-10-12", "amount": 600.0, "merchant": "ElectroMart", "share_of_spent": 0.94}
+    assert d["history"][0] == {"month": "July 2026", "total": 150.0}
+
+
+def test_diagnose_scrubs_merchants(db, tmp_path):
+    _, prompt = diagnose_prompt(db, tmp_path, [gm(12, 60000, "Paid jane.doe@example.com")])
+    assert "jane.doe@example.com" not in prompt
+
+
+def test_diagnose_category_only_capped_newest_first(db, tmp_path):
+    txns = [gm(d, 1000 + d) for d in range(1, 26)] + [gm(3, 5000, "Diner", "FOOD_AND_DRINK") for _ in range(3)]
+    rows = data(diagnose_prompt(db, tmp_path, txns)[1])["transactions"]
+    assert len(rows) == 20
+    assert "Diner" not in {r["merchant"] for r in rows}
+    assert [r["date"] for r in rows] == sorted((r["date"] for r in rows), reverse=True)
+
+
+def test_diagnose_audited(db, tmp_path):
+    g, _ = diagnose_prompt(db, tmp_path, [gm(12, 60000, "ElectroMart")])
+    line = audit_lines(tmp_path / "a.jsonl")[-1]
+    assert (line["purpose"], line["params"], line["pseudonym"]) == ("diagnose", {"category": GM}, g.pseudonym)
+    assert "u-jane" not in json.dumps(line)
+
+
+def test_diagnose_unnamed_merchant(db, tmp_path):
+    d = data(diagnose_prompt(db, tmp_path, [gm(12, 60000, None)])[1])
+    assert d["merchants"][0]["merchant"] is None
+    assert d["transactions"][0]["merchant"] is None
