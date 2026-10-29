@@ -186,3 +186,9 @@ Run them from `backend/`:
 **What it does:** It is skipped unless Ollama is running with `OLLAMA_MODEL`. For each of the four planted users, it runs the real model on its run date and checks the cause. A recurring cause must lead to `adjust_next_budget`; every other cause must lead to something other than `adjust_next_budget` or `no_op`.
 
 **Why it's there:** It's the done-when: the local model gets the right cause from the computed facts for all three causes, plus the big one-off at a regular shop found in review. Checking the action as well catches a proposal the user shouldn't get, such as a higher budget after holiday shopping.
+
+## `test_live_second_run_no_duplicate`
+
+**What it does:** It is skipped unless Ollama is running with `OLLAMA_MODEL`. It runs the one-time planted user twice on Oct 20 with the real model. The first run writes one alert. The second chooses `no_op`, and there is still one alert.
+
+**Why it's there:** It's TPC-20's done-when, checked against the real local model, because deduplication is the model's decision from its memory facts.

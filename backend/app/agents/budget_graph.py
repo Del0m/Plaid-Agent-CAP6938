@@ -44,6 +44,7 @@ class BudgetState(TypedDict, total=False):
     flags: list[dict]           # the flagged ones
     facts: dict[str, dict]      # category -> OverspendFacts, plus its proposed limit
     contexts: dict[str, str]    # category -> the gateway's prompt context, built (and audited) once
+    memory: dict[str, list]     # category -> this month's earlier alerts, for the decide prompt's summary
     diagnoses: dict[str, Optional[dict]]
     actions: dict[str, dict]
     alert_ids: list[int]
@@ -176,7 +177,8 @@ def build_budget_graph(session_factory, *, model: Optional[BaseChatModel], gatew
             d = invoke_structured(model, Diagnosis, diagnose_messages(contexts[cat]))
             diagnoses[cat] = d.model_dump() if d else None
             failures += d is None
-        return {"facts": facts, "contexts": contexts, "diagnoses": diagnoses, "llm_failures": failures}
+        return {"facts": facts, "contexts": contexts, "diagnoses": diagnoses, "llm_failures": failures,
+                "memory": {cat: alerts for cat, (alerts, _) in memory.items()}}
 
     def decide_action(state: BudgetState) -> dict:
         actions, failures = {}, state["llm_failures"]
@@ -185,7 +187,7 @@ def build_budget_graph(session_factory, *, model: Optional[BaseChatModel], gatew
             d, f = state["diagnoses"][cat], state["facts"][cat]
             a = invoke_structured(model, Action, decide_messages(
                 state["contexts"][cat], Diagnosis(**d) if d else None, f["projected_cents"],
-                f["proposed_limit_cents"], _severity(flag["reason"])))
+                f["proposed_limit_cents"], _severity(flag["reason"]), state["memory"][cat]))
             fallback = a is None
             if fallback:
                 failures += 1

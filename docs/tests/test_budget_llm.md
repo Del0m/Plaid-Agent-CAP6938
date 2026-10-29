@@ -81,6 +81,12 @@ Run them from `backend/`:
 
 ## `test_decide_messages_severity_and_rules`
 
-**What it does:** The decide prompt states the flag's severity, and its instructions include the two memory rules: `no_op` when this month already has an alert of the same or higher severity, and never re-propose an adjustment the user dismissed.
+**What it does:** The decide prompt states the flag's severity. Its instructions open with the memory check, before the list of actions: `no_op` when this month already has an alert of the same or higher severity, and never re-propose an adjustment the user dismissed.
 
 **Why it's there:** Deduplication is the model's call (TPC-20). It can only judge "nothing got worse" if it's told this flag's severity next to the earlier alerts'.
+
+## `test_decide_messages_summarize_earlier_alerts`
+
+**What it does:** With two earlier alerts this month (medium, then high), the decide prompt says "Earlier alerts for this category this month: 2, highest severity high". With none, it says "none".
+
+**Why it's there:** In live runs, `qwen2.5:14b` alerted again on the same overspend twice when the earlier alerts were only inside the JSON facts. With this one-line summary and the memory rule first in the prompt, it chose `no_op` both times. The model still decides; the code only puts the comparison in front of it.

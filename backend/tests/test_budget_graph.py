@@ -324,3 +324,17 @@ def test_live_planted_causes(db, tmp_path):
             assert state["actions"][cat]["action"] == "adjust_next_budget", p.id
         else:
             assert state["actions"][cat]["action"] not in ("adjust_next_budget", "no_op"), p.id
+
+
+
+@pytest.mark.skipif(not ollama_has(config.OLLAMA_MODEL), reason="needs ollama running with OLLAMA_MODEL pulled")
+def test_live_second_run_no_duplicate(db, tmp_path):
+    # the done-when (tpc-20): the model sees its own earlier alert and doesn't repeat it
+    model = get_chat_model()
+    uid = seed(db, "overspend-one-time")
+    run(db, uid, model=model, tmp_path=tmp_path)
+    assert len(rows(db, Alert)) == 1
+    second = run(db, uid, model=model, tmp_path=tmp_path)
+    print("second run:", second["actions"])
+    assert len(rows(db, Alert)) == 1
+    assert second["actions"][GM]["action"] == "no_op"

@@ -77,5 +77,14 @@ def test_no_proposal_unless_recurring():
 def test_decide_messages_severity_and_rules():
     from app.agents.budget_llm import DECIDE_PROMPT
     assert "Severity of this flag: high" in decide_messages("{}", None, 15500, 16000, "high")[-1].content
-    assert "choose no_op" in DECIDE_PROMPT
+    assert "choose no_op" in DECIDE_PROMPT and DECIDE_PROMPT.index("First check memory") < DECIDE_PROMPT.index("alert:")
     assert "Never choose adjust_next_budget if past_advice" in DECIDE_PROMPT
+
+
+
+def test_decide_messages_summarize_earlier_alerts():
+    earlier = [{"severity": "medium", "action": "alert", "status": "dismissed"},
+               {"severity": "high", "action": "alert", "status": "pending_user"}]
+    text = decide_messages("{}", None, 15500, 16000, "high", earlier)[-1].content
+    assert "Earlier alerts for this category this month: 2, highest severity high" in text
+    assert "Earlier alerts for this category this month: none" in decide_messages("{}", None, 1, 1, "high")[-1].content
