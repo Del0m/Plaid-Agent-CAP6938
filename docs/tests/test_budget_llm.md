@@ -1,0 +1,68 @@
+# Tests: `backend/tests/test_budget_llm.py`
+
+These tests cover `app/agents/budget_llm.py`, the budget graph's two LLM calls (TPC-19):
+- **`Diagnosis`:** the cause of one overspend (`one_time`, `seasonal` or `recurring`) with a one-sentence piece of evidence.
+- **`Action`:** what to do about it (`alert`, `suggest_cuts`, `adjust_next_budget` or `no_op`) with a short message for the user.
+
+`invoke_structured` binds Ollama's `format` to the model's JSON schema, which constrains the output. Pydantic still checks the reply, and a bad reply gets exactly one retry before the call gives up and the graph falls back to a plain alert.
+
+Run them from `backend/`:
+
+```bash
+../venv/bin/python -m pytest tests/test_budget_llm.py -v
+```
+
+## Shared setup
+
+- `model(*replies)` builds a `ScriptedChatModel` (`tests/fakes.py`) that replies with the given strings in order, or raises a given exception. `kwargs_seen` (added for TPC-19) records each call's keyword arguments, so a test can see the bound `format`.
+- `GOOD` is a valid `one_time` diagnosis as JSON.
+
+---
+
+## `test_valid_reply_parsed`
+
+**What it does:** A valid reply comes back as a `Diagnosis`, and the call bound `format` to `Diagnosis`'s JSON schema.
+
+**Why it's there:** The schema is what makes a local model's output dependable, so the test checks it's actually sent, not just that parsing works.
+
+## `test_invalid_then_valid_retries`
+
+**What it does:** A first reply that isn't JSON is retried, and the second reply is used.
+
+**Why it's there:** Small models occasionally produce a bad answer. One retry usually recovers without the user noticing.
+
+## `test_two_invalid_gives_none`
+
+**What it does:** Two replies that don't match the schema (`{}`) return `None` after exactly 2 calls.
+
+**Why it's there:** The retry is bounded, so a model stuck on bad output can't loop. `None` tells the graph to use its fallback.
+
+## `test_fenced_json_parses`
+
+**What it does:** A valid object wrapped in a ```` ```json ```` fence parses on the first call.
+
+**Why it's there:** Models often fence their JSON even when asked not to. Treating that as invalid would waste the retry.
+
+## `test_empty_text_is_invalid`
+
+**What it does:** A diagnosis with empty evidence counts as invalid, and the retry's reply is used.
+
+**Why it's there:** An empty message or evidence would put a blank alert in front of the user.
+
+## `test_model_error_propagates`
+
+**What it does:** A connection error from the model is raised, not retried or turned into `None`.
+
+**Why it's there:** Ollama being down isn't a bad answer. The run should fail and be marked `error`, and the next daily run retries.
+
+## `test_action_schema`
+
+**What it does:** An `adjust_next_budget` action parses through the same call.
+
+**Why it's there:** Both LLM calls share one path, so a fix to retries or parsing applies to both.
+
+## `test_decide_messages_carry_numbers`
+
+**What it does:** The decide prompt carries the facts, the diagnosis cause, the projected spend ($155.00) and the proposed limit ($160.00) in dollars. Without a diagnosis it says the cause is unknown.
+
+**Why it's there:** The LLM picks the action but never computes a money number. It gets the code's projection and proposal to quote, and still gets a prompt when the diagnosis failed.
