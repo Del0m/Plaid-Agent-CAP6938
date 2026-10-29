@@ -247,5 +247,5 @@ It records every call.
 |---|---|
 | A 30-day simulation takes minutes with the real model | Runs in the background with progress. The done-when test uses the fake model. The CLI prints each day as it goes |
 | The scheduler fires while the user simulates or clicks Run | The one per-user lock. A busy user is skipped for that day, and the next day runs normally |
-| A server down at 06:00 skips the day | Misfire grace of 1 hour. No catch-up by design, because pace is about today |
+| A server down at 06:00 skips the day | Corrected after review: APScheduler's misfire grace only covers a running server. At startup, if today's slot has passed, it runs once for users not yet checked today (and the month-end slot on the 1st for users not yet closed). Earlier days are never replayed |
 | APScheduler in-process with more than one worker would double-run | One worker is already required (chat and budget locks). Documented |

@@ -59,3 +59,25 @@ The `users` fixture seeds four planted users:
 **What it does:** With `ENABLE_SCHEDULER` off, starting the app builds no scheduler. With it on, the scheduler starts with the app and shuts down with it.
 
 **Why it's there:** A dev server or the test suite must never run the daily job by surprise. A real deployment must not leave it running after shutdown.
+
+## `test_catch_up_jobs_after_the_slot`
+
+**What it does:** At startup:
+- 09:00 on Oct 29 adds a one-off `catch_up_daily`;
+- 04:00 adds nothing;
+- 09:00 on Nov 1 adds both `catch_up_daily` and `catch_up_month_end`;
+- 05:30 on Nov 1 adds only the month-end one, because 06:00 hasn't come yet.
+
+**Why it's there:** It was found in the TPC-21 review. APScheduler's in-memory job store forgets slots that passed while the server was down, and the one-hour misfire grace only covers a running server. A server started after 06:00 would never have run that day's check. Only today's slot is caught up, never earlier days.
+
+## `test_daily_catch_up_skips_users_already_run_today`
+
+**What it does:** With `skip_done`, users whose budget already ran today (here, the fixture's runs moments ago) are skipped, and the user who hasn't run is run.
+
+**Why it's there:** The catch-up must not run a second check for someone who already had one today, whether from the scheduler, the button or an earlier start.
+
+## `test_month_end_catch_up_skips_closed`
+
+**What it does:** After November's month-end slot has closed October for three users, a catch-up with `skip_done` closes nobody again.
+
+**Why it's there:** A restart on the 1st must not record a second close for the same month. TPC-22's real close must be idempotent per user and month.

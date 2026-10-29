@@ -105,6 +105,9 @@ class Recorder:
     def get_jobs(self):
         return []
 
+    def add_job(self, *a, **k):
+        self.calls.append("add_job")
+
 
 def test_lifespan_starts_only_when_enabled(db, monkeypatch):
     from fastapi.testclient import TestClient
@@ -120,4 +123,40 @@ def test_lifespan_starts_only_when_enabled(db, monkeypatch):
     monkeypatch.setattr(config, "ENABLE_SCHEDULER", True)
     with TestClient(main.app):
         pass
-    assert built[0].calls == ["start", "shutdown"]
+    assert built[0].calls[-2:] == ["start", "shutdown"]
+
+
+# --- review fixes: a server started after the slot still runs today, once ---
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from app.scheduler import add_catch_up_jobs
+
+NY = ZoneInfo("America/New_York")
+
+
+def test_catch_up_jobs_after_the_slot():
+    def ids(now):
+        sched = build_scheduler()
+        add_catch_up_jobs(sched, now)
+        return sorted(j.id for j in sched.get_jobs() if j.id.startswith("catch_up"))
+    assert ids(datetime(2026, 10, 29, 9, 0, tzinfo=NY)) == ["catch_up_daily"]
+    assert ids(datetime(2026, 10, 29, 4, 0, tzinfo=NY)) == []
+    assert ids(datetime(2026, 11, 1, 9, 0, tzinfo=NY)) == ["catch_up_daily", "catch_up_month_end"]
+    assert ids(datetime(2026, 11, 1, 5, 30, tzinfo=NY)) == ["catch_up_month_end"]
+
+
+def test_daily_catch_up_skips_users_already_run_today(db, users):
+    # the fixture ran "budgeted" and "both" moments ago (today, by the wall clock); "real" hasn't run
+    today = datetime.now(NY).date()
+    result = daily_budget_job(db, today=today, model=SchemaReplyModel(), checkpointer=None, skip_done=True)
+    assert result["ran"] == [users["real"]]
+    assert result["skipped"] == sorted([users["budgeted"], users["both"]])
+
+
+def test_month_end_catch_up_skips_closed(db, users):
+    month_end_job(db, today=date(2026, 11, 1))
+    assert month_end_job(db, today=date(2026, 11, 1), skip_done=True) == {"closed": []}
+    with db() as s:
+        assert s.query(AgentRun).filter_by(graph="close").count() == 3

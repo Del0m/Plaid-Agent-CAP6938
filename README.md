@@ -79,7 +79,7 @@ With Ollama running, each flagged day takes a few seconds of model time, so a mo
 
 ## Run the agent every morning
 
-Set `ENABLE_SCHEDULER=1` and the API runs each real user's budget check daily at `DAILY_RUN_TIME` (06:00), plus the month-end slot on the 1st at `CLOSE_RUN_TIME` (05:00), in `SCHEDULER_TZ`. Run a single uvicorn worker (the default); the scheduler lives inside it.
+Set `ENABLE_SCHEDULER=1` and the API runs each real user's budget check daily at `DAILY_RUN_TIME` (06:00), plus the month-end slot on the 1st at `CLOSE_RUN_TIME` (05:00), in `SCHEDULER_TZ`. If the server starts after today's slot, it runs it once at startup for anyone not yet checked today. Earlier missed days aren't replayed. Run a single uvicorn worker (the default); the scheduler lives inside it.
 
 ## Demo on a phone
 

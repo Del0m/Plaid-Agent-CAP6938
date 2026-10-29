@@ -130,3 +130,31 @@ def test_advance_job_error_reports_type(admin):
     lock = user_lock(uid)
     assert lock.acquire(blocking=False)
     lock.release()
+
+
+def test_lock_freed_when_final_status_write_fails(admin, monkeypatch):
+    # review finding: the job thread released the lock only after writing its final status; a failing write
+    # (sqlite "database is locked") left the user locked out until a restart
+    from app.api import admin as admin_routes
+    uid = admin.seed()
+    real_utcnow = admin_routes.utcnow
+
+    def broken_utcnow():
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(admin_routes, "utcnow", broken_utcnow)
+
+    # a real thread, as in production (joined at once, so the single test db connection is never shared):
+    # run inline, the exception would climb back into the route, whose fallback hides the leak
+    def threaded(work):
+        import threading
+        t = threading.Thread(target=work)
+        t.start()
+        t.join()
+
+    monkeypatch.setattr(budget_routes, "_spawn", threaded)
+    advance(admin, 1)
+    monkeypatch.setattr(admin_routes, "utcnow", real_utcnow)
+    lock = user_lock(uid)
+    assert lock.acquire(blocking=False)
+    lock.release()

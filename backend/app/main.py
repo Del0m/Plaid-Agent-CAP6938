@@ -4,7 +4,8 @@ import logging
 from . import config
 from .agents.budget_graph import close_interrupted_runs
 from .api import admin, alerts, budget, budget_hooks, chat, dashboard, plaid
-from .scheduler import build_scheduler
+from datetime import datetime, timezone
+from .scheduler import add_catch_up_jobs, build_scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ async def lifespan(_app: FastAPI):
     sched = None
     if config.ENABLE_SCHEDULER:
         sched = build_scheduler()
+        add_catch_up_jobs(sched, datetime.now(timezone.utc))     # today's slot, if the server starts after it
         sched.start()
         for job in sched.get_jobs():
             logger.info("scheduled %s, next run %s", job.id, job.next_run_time)

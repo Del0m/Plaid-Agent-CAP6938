@@ -13,6 +13,8 @@ import { daysToMonthEnd, formatDate } from "@/lib/format";
 const POLL_MS = 2000;
 // a run whose server stopped never finishes; give up after 10 minutes instead of spinning forever
 const MAX_POLLS = 300;
+// a simulation makes a run per day (two model calls on flagged days): allow 2 minutes a day, never under 10
+const SIM_POLLS_PER_DAY = 60;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -110,7 +112,8 @@ export default function AlertsPage() {
     try {
       const { job_id } = await advanceSim(days);
       let job: SimJob | null = null;
-      for (let i = 0; i < MAX_POLLS && mounted.current; i++) {
+      const maxPolls = Math.max(MAX_POLLS, days * SIM_POLLS_PER_DAY);
+      for (let i = 0; i < maxPolls && mounted.current; i++) {
         await sleep(POLL_MS);
         if (!mounted.current) return;
         job = await getSimJob(job_id);

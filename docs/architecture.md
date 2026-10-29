@@ -526,7 +526,9 @@ Only in Sandbox. Plaid's Transfer product needs separate approval for production
 - **Scheduler (TPC-21):** `ENABLE_SCHEDULER=1` starts APScheduler inside the API.
   - Every day at `DAILY_RUN_TIME` (06:00), it runs each real user's budget check (anyone with a budget or a real Plaid item, not simulated users).
   - On the 1st at `CLOSE_RUN_TIME` (05:00), it runs the month-end slot.
-  - Both are in `SCHEDULER_TZ`. A run missed by under an hour still happens once, and there's no catch-up of missed days.
+  - Both are in `SCHEDULER_TZ`.
+  - The slots only fire while the server is up: APScheduler's misfire grace covers a busy server, not one that was down.
+  - So at startup, if today's slot has already passed, it runs once for users not yet checked today, and the month-end slot runs on the 1st for users not yet closed. Earlier days are never replayed.
 - **The UI demo (TPC-20):** seed a planted user, run the API as that user, and use the Alerts page:
 
   ```bash

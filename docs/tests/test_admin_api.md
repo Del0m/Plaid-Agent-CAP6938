@@ -83,3 +83,9 @@ Run them from `backend/`:
 **What it does:** With the model down, an advance from Oct 11 ends `error` with `ConnectionError`. The simulated date stays at the last completed day, and the lock is free (plan Review Focus 5).
 
 **Why it's there:** The panel says where the simulation stopped and why. A second advance resumes from there instead of skipping a day.
+
+## `test_lock_freed_when_final_status_write_fails`
+
+**What it does:** When the job thread can't write its final status (the write raises), the user's run lock is still released. The job runs in a real thread here, joined at once.
+
+**Why it's there:** It was found in the TPC-21 review. The release came after the status write, so a failing write (SQLite "database is locked") left the user locked out of every run until a restart. Run inline, the exception climbed back into the route, whose fallback hid the leak, which is why this test uses a thread.

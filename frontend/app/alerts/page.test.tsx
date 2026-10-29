@@ -230,4 +230,21 @@ describe("Alerts page", () => {
     fireEvent.click(screen.getByRole("button", { name: "To month end" }));
     await waitFor(() => expect(advanceMock).toHaveBeenCalledWith(1));
   });
+
+  test("a month-long advance is followed past 10 minutes", async () => {
+    // review finding: 31 days on the real model can take longer than the run button's 10-minute cap
+    simMock.mockResolvedValue(SIMULATED);
+    advanceMock.mockResolvedValue({ job_id: 5 });
+    simJobMock.mockImplementation(async () =>
+      simJobMock.mock.calls.length < 400 ? job({ status: "running", days_requested: 28, days_done: 20 })
+        : job({ days_requested: 28, days_done: 28, date: "2026-10-31" }));
+    render(<AlertsPage />);
+    await screen.findByText("Simulated date: Oct 3, 2026");
+    fireEvent.click(screen.getByRole("button", { name: "To month end" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(820 * 1000);
+    });
+    expect(await screen.findByText(/^Advanced 28 days to Oct 31, 2026/)).toBeTruthy();
+    expect(screen.queryByText("Still running. Check back later.")).toBeNull();
+  });
 });

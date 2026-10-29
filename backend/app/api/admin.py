@@ -81,13 +81,19 @@ def advance(req: AdvanceRequest, user: User = Depends(get_current_user)):
                 logger.warning("simulation job %s failed", job_id, exc_info=True)
                 status, error = "error", type(exc).__name__
             finally:
-                with factory() as s:
-                    row = s.get(AgentRun, job_id)
-                    row.status, row.finished_at = status, utcnow()
-                    if error:
-                        row.summary_json = {**(row.summary_json or {}), "error": error}
-                    s.commit()
-                lock.release()
+                # the lock is released whatever happens to the status write: a write failing here (sqlite
+                # "database is locked") must not lock the user out of every run until a restart
+                try:
+                    with factory() as s:
+                        row = s.get(AgentRun, job_id)
+                        row.status, row.finished_at = status, utcnow()
+                        if error:
+                            row.summary_json = {**(row.summary_json or {}), "error": error}
+                        s.commit()
+                except Exception:
+                    logger.warning("simulation job %s: couldn't record its status", job_id, exc_info=True)
+                finally:
+                    lock.release()
 
         budget_routes._spawn(work)
     except Exception:

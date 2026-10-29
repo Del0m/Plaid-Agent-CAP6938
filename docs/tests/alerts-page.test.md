@@ -123,3 +123,9 @@ npm test -- app/alerts/page.test.tsx
 **What it does:** On Oct 31, **To month end** advances 1 day.
 
 **Why it's there:** It never sends 0, which the API rejects (plan Review Focus 3).
+
+## `a month-long advance is followed past 10 minutes`
+
+**What it does:** "To month end" (28 days) whose job runs for about 13 minutes is still followed to the end and shows its result, not "Still running".
+
+**Why it's there:** It was found in the TPC-21 review. A month on the real model can take longer than the run button's 10-minute cap. The simulation allows 2 minutes per day, never under 10.
