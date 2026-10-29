@@ -51,6 +51,20 @@ ollama pull nomic-embed-text
 
 Answers stream in as they're written; the chips under each answer show which tools ran, and the links are the guidance the app retrieved. A conversation survives a refresh (one per tab); **New chat** starts a fresh one. One reply runs at a time per user, so run the API with a single uvicorn worker (the default).
 
+## Budget agent and alerts
+
+The budget agent checks spending against this month's budget. It asks the local model (`qwen2.5:14b`) why a category is overspent and what to do about it, and posts alerts to `/alerts`. A proposal to change next month's budget waits for your Accept or Dismiss. The dashboard's **Budget** card shows each category's pace.
+
+To try it on a synthetic user with a planted overspend:
+
+```bash
+cd backend
+../venv/bin/python scripts/seed_budget_user.py --profile overspend-recurring --replace
+DEV_USER_EMAIL=overspend-recurring@eval.local ../venv/bin/uvicorn app.main:app
+```
+
+Then start the web app. On `/alerts`, run a budget check for **2026-10-20**, accept the $135 proposal, and run again: the agent remembers and doesn't alert twice. Other planted users are `overspend-one-time`, `overspend-seasonal` and `overspend-known-merchant`. The same run works from the terminal with `../venv/bin/python -m app.agents.budget_graph --user budget-overspend-recurring --date 2026-10-20 --no-sync`.
+
 ## Demo on a phone
 
 1. Build and serve the web app on every network interface:
