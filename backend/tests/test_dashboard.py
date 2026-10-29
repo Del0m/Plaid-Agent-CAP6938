@@ -208,4 +208,27 @@ def test_unsynced_items_listed(client, db):
     body = client.get("/dashboard").json()
 
     assert [i["institution_name"] for i in body["unsynced_items"]] == ["First Platypus Bank"]
-    assert set(body["unsynced_items"][0]) == {"id", "institution_name"}
+    assert set(body["unsynced_items"][0]) == {"id", "institution_name", "syncing"}
+    assert body["unsynced_items"][0]["syncing"] is False
+
+
+def test_debt_balance_uses_current_account_not_liability_snapshot(client, db):
+    seed(db, dev_user_id(db), [
+        acct("Card", "credit", 12000, liability=credit(20, 99000)),
+        acct("Unknown card", "credit", None, liability=credit(10, 88888)),
+    ])
+    body = client.get("/dashboard").json()
+    assert body["debts_cents"] == 12000
+    assert [(d["name"], d["balance_cents"]) for d in body["debts"]] == [
+        ("Card", 12000), ("Unknown card", None),
+    ]
+
+
+def test_account_groups_include_legacy_brokerage_and_sort_case_insensitively(client, db):
+    seed(db, dev_user_id(db), [acct("Zeta", "depository", 100), acct("ally", "brokerage", 200),
+                              acct("Card", "credit", 50), acct("Other", "other", 999)])
+    body = client.get("/dashboard").json()
+    assert body["assets_cents"] == 300
+    assert [(a["name"], a["group"]) for a in body["accounts"]] == [
+        ("ally", "asset"), ("Zeta", "asset"), ("Card", "debt"), ("Other", "other"),
+    ]
