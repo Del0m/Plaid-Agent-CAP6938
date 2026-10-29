@@ -3,7 +3,7 @@ from fastapi import FastAPI, status
 import logging
 from . import config
 from .agents.budget_graph import close_interrupted_runs
-from .api import alerts, budget, budget_hooks, chat, dashboard, plaid
+from .api import admin, alerts, budget, budget_hooks, chat, dashboard, plaid
 from .scheduler import build_scheduler
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ app.include_router(dashboard.router)
 app.include_router(chat.router)
 app.include_router(alerts.router)
 app.include_router(budget.router)
+app.include_router(admin.router)
 
 # Create an endpoint that ensures it is up and running
 @app.get("/health", status_code=status.HTTP_200_OK)
