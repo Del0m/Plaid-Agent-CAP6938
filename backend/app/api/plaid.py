@@ -1,10 +1,12 @@
 import logging
+from typing import Optional
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.engine import Connection, Engine
 from ..db.models import PlaidItem, User
 from ..db.session import get_session
 from ..plaid_service import client as plaid
@@ -24,9 +26,12 @@ class LinkTokenResponse(BaseModel):
 
 class ExchangeRequest(BaseModel):
     public_token: str
+    institution_name: Optional[str] = None      # from Link's onSuccess metadata, display only
 
 class ExchangeResponse(BaseModel):
     item_id: int
+    synced: bool                                # false while the full sync is queued/running
+    syncing: bool = True                        # full sync runs after the HTTP response
 
 
 # turn plaid/network failures into an HTTP error without leaking secrets or tokens
@@ -38,6 +43,38 @@ def _plaid_failure(err: Exception) -> HTTPException:
         return HTTPException(code, detail={"plaid_error_code": err.error_code})
     logger.warning("plaid unreachable: %s", type(err).__name__)
     return HTTPException(status.HTTP_502_BAD_GATEWAY, detail="plaid unreachable")
+
+
+# first sync right after linking so the dashboard has data; a failure keeps the item
+# (its token is still good) and the caller can retry with /plaid/items/{id}/sync.
+# catches everything: the item is already stored, so a 500 here would read as "link failed"
+def _sync_after_link(session: Session, item: PlaidItem) -> bool:
+    try:
+        sync_item(session, item)
+        return True
+    except Exception as err:
+        logger.warning("sync after link failed for item %s: %s",
+                       item.id, getattr(err, "error_code", type(err).__name__))
+        session.rollback()
+        item.status = "sync_failed"
+        session.commit()
+        return False
+
+
+def _sync_linked_item(bind: Engine | Connection, item_id: int) -> None:
+    # Background work owns its session; the request session can already be closed.
+    with Session(bind=bind, expire_on_commit=False) as session:
+        item = session.get(PlaidItem, item_id)
+        if item is not None:
+            _sync_after_link(session, item)
+
+
+def _queue_sync(session: Session, item: PlaidItem, background: BackgroundTasks) -> ExchangeResponse:
+    item.status = "syncing"
+    session.commit()
+    item_id = item.id
+    background.add_task(_sync_linked_item, session.get_bind(), item_id)
+    return ExchangeResponse(item_id=item_id, synced=False, syncing=True)
 
 
 @router.post("/link-token", response_model=LinkTokenResponse)
@@ -53,6 +90,7 @@ def create_link_token(user: User = Depends(get_current_user)):
 @router.post("/exchange", response_model=ExchangeResponse)
 def exchange_public_token(
     body: ExchangeRequest,
+    background: BackgroundTasks,
     user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
@@ -69,13 +107,17 @@ def exchange_public_token(
             raise HTTPException(status.HTTP_409_CONFLICT, detail="item already linked")
         existing.access_token_enc = encrypt(access_token)
         existing.status = "active"
+        if body.institution_name:
+            existing.institution_name = body.institution_name
         session.commit()
-        return ExchangeResponse(item_id=existing.id)
+        # read the id first: a failed sync rolls back, which expires the row
+        return _queue_sync(session, existing, background)
 
     item = PlaidItem(
         user_id=user.id,
         plaid_item_id=plaid_item_id,
         access_token_enc=encrypt(access_token),
+        institution_name=body.institution_name,
     )
     session.add(item)
     try:
@@ -84,7 +126,7 @@ def exchange_public_token(
         # a concurrent exchange inserted the same item between our check and commit
         session.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail="item already linked")
-    return ExchangeResponse(item_id=item.id)
+    return _queue_sync(session, item, background)
 
 
 # pull everything for one of the current user's items; safe to call repeatedly
@@ -100,7 +142,13 @@ def sync_one_item(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="item not found")
     try:
         return sync_item(session, item)
-    except (PlaidError, httpx.HTTPError) as err:
+    except Exception as err:
+        session.rollback()
+        item.status = "sync_failed"
+        session.commit()
+        if not isinstance(err, (PlaidError, httpx.HTTPError)):
+            logger.warning("sync failed for item %s: %s", item_id, type(err).__name__)
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail="Bank sync failed. Try again.")
         raise _plaid_failure(err)
 
 

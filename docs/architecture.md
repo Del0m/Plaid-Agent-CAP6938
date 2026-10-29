@@ -253,7 +253,7 @@ POST /auth/register, /auth/login
 POST /plaid/link-token          -> { link_token }
 POST /plaid/exchange            { public_token } -> 200
 POST /plaid/webhook             (Plaid calls this)
-GET  /dashboard                 -> balances, debts, budget pace
+GET  /dashboard                 -> balances, net worth, debts by APR (budget pace added in M3)
 GET  /transactions?from&to&category
 GET  /budget/current            -> period + lines
 POST /budget/lines/{id}         (user override)
@@ -447,6 +447,10 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-08 | Every test is documented in `docs/tests/<module>.md` (what it does, why it exists) | Teammates and graders can tell what each test checks, and nobody has to guess why a regression test exists |
 | 2026-10-08 | Removed transactions are soft-deleted (`removed=True`); one `liabilities` row per account (unique `account_id`); credit cards store the purchase APR | Keeps history for the budget agent; makes liability refresh an upsert; purchase APR is what applies to normal spending |
 | 2026-10-08 | Sync rows and cursor commit together; `SYNC_UPDATES_AVAILABLE` webhook syncs transactions only, in a background task | A crash replays pages instead of losing them; Plaid needs a fast 200, and balances/liabilities don't change on that webhook |
+| 2026-10-18 | `/plaid/exchange` syncs the item inline; on any sync failure the item is kept and `synced: false` is returned; `/dashboard` lists never-synced items so the page's Retry sync survives a refresh. **Superseded by the PR review fix below.** | The dashboard has data right after linking, and a valid access token is never thrown away over a retryable error |
+| 2026-10-29 | Linking queues a full sync after the response, with `synced: false, syncing: true`; `plaid_items.status` tracks `syncing`, `sync_failed`, and `active`. The dashboard polls syncing items, and lists failed items even when their transaction cursor was committed. Syncs of one item share a reentrant in-process lock; the API uses one worker. | Slow history cannot time out the link response, partial sync failures stay retryable, and webhook/manual syncs cannot insert the same pages concurrently. Account grouping is returned by the API, and dashboard debt rows use the current account balance. |
+| 2026-10-18 | Net worth = depository + investment minus credit + loan current balances; the debts list = accounts with a `liabilities` row, APR descending, unknown APR last | Matches how Plaid reports balances; the list only shows debts we have APR data for, in avalanche order |
+| 2026-10-18 | Frontend reaches FastAPI through a Next.js `/api/*` rewrite, not CORS | Same origin keeps future auth cookies simple, needs no CORS config, and lets a phone on the LAN use the app without reaching the backend |
 | | | |
 
 ---
