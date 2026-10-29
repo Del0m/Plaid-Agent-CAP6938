@@ -3,10 +3,11 @@ from datetime import date
 
 import pytest
 from langchain_core.messages import AIMessage
+from langgraph.checkpoint.memory import InMemorySaver
 
 from app import config
 from app.agents import budget_graph
-from app.agents.budget_graph import run_budget
+from app.agents.budget_graph import resume_budget_run, run_budget, waiting_for
 from app.agents.llm import get_chat_model
 from app.db.models import Account, AdviceLog, AgentRun, Alert, BudgetLine, BudgetPeriod
 from eval.budget_users import PLANTED, PROFILES, seed_profile
@@ -56,7 +57,7 @@ def test_full_run_one_time(db, tmp_path):
     [agent_run] = rows(db, AgentRun, user_id=uid)
     assert (agent_run.graph, agent_run.status) == ("budget", "ok") and agent_run.finished_at is not None
     assert set(agent_run.summary_json) == {"period_id", "flags", "causes", "actions", "alert_ids", "unbudgeted",
-                                           "uncategorized", "sync", "llm_failures"}
+                                           "uncategorized", "sync", "llm_failures", "decisions"}
     gm_line = next(ln for ln in rows(db, BudgetLine) if ln.category == GM)
     assert gm_line.spent_cents > 60000 and gm_line.last_pace is not None
 
@@ -186,6 +187,65 @@ def test_adjust_downgraded_unless_recurring(db, tmp_path):
     assert (alert.action, alert.proposed_limit_cents) == ("alert", None)
     assert alert.message.startswith("General merchandise is over its $") and "1600" not in alert.message
     assert state["actions"][GM]["downgraded"] is True
+
+
+RECUR = reply(cause="recurring", evidence="A new $90 gym.")
+ADJUST = reply(action="adjust_next_budget", message="Raise personal care to $135.")
+
+
+def test_adjust_pauses_awaiting_user(db, tmp_path):
+    uid, ck = seed(db, "overspend-recurring"), InMemorySaver()
+    state = run(db, uid, model=fake(RECUR, ADJUST), tmp_path=tmp_path, checkpointer=ck)
+    [alert] = rows(db, Alert)
+    assert (state["status"], state["waiting_for"]) == ("awaiting_user", [alert.id])
+    assert rows(db, AgentRun)[0].status == "awaiting_user"
+    assert waiting_for(db, ck, state["run_id"]) == [alert.id]
+
+
+def test_resume_accept_finishes(db, tmp_path):
+    uid, ck = seed(db, "overspend-recurring"), InMemorySaver()
+    state = run(db, uid, model=fake(RECUR, ADJUST), tmp_path=tmp_path, checkpointer=ck)
+    [alert] = rows(db, Alert)
+    done = resume_budget_run(db, state["run_id"], alert.id, "accepted", checkpointer=ck, model=fake())
+    assert done["status"] == "ok"
+    [agent_run] = rows(db, AgentRun)
+    assert agent_run.status == "ok" and agent_run.summary_json["decisions"] == {str(alert.id): "accepted"}
+    assert waiting_for(db, ck, state["run_id"]) == []
+
+
+def test_two_adjusts_any_order(db, tmp_path):
+    uid, ck = seed(db, "overspend-recurring"), InMemorySaver()
+    with db() as s:
+        s.info["n"] = 100000     # add_txn numbers plaid ids per session; keep clear of the seeded ones
+        acct = s.query(Account).filter_by(user_id=uid).one()
+        for m in (7, 8, 9):
+            add_txn(s, acct, 4000, "TRAVEL", merchant="Bus", day=date(2026, m, 6))
+        add_txn(s, acct, 20000, "TRAVEL", merchant="AirCo", day=date(2026, 10, 5))
+        add_txn(s, acct, 4000, "TRAVEL", merchant="Bus", day=date(2026, 10, 6))
+        s.commit()
+    state = run(db, uid, model=fake(RECUR, RECUR, ADJUST, ADJUST), tmp_path=tmp_path, checkpointer=ck)
+    first, second = sorted(a.id for a in rows(db, Alert))
+    assert sorted(state["waiting_for"]) == [first, second]
+    mid = resume_budget_run(db, state["run_id"], second, "dismissed", checkpointer=ck, model=fake())
+    assert (mid["status"], mid["waiting_for"]) == ("awaiting_user", [first])
+    assert resume_budget_run(db, state["run_id"], first, "accepted", checkpointer=ck, model=fake())["status"] == "ok"
+    assert rows(db, AgentRun)[0].summary_json["decisions"] == {str(first): "accepted", str(second): "dismissed"}
+
+
+def test_alert_only_never_pauses(db, tmp_path):
+    uid = seed(db, "overspend-one-time")
+    assert run(db, uid, model=fake(DIAG, ALERT), tmp_path=tmp_path, checkpointer=InMemorySaver())["status"] == "ok"
+
+
+def test_no_checkpointer_never_pauses(db, tmp_path):
+    uid = seed(db, "overspend-recurring")
+    assert run(db, uid, model=fake(RECUR, ADJUST), tmp_path=tmp_path)["status"] == "ok"
+
+
+def test_on_start_gets_run_id(db, tmp_path):
+    uid, seen = seed(db, "overspend-one-time"), []
+    state = run(db, uid, model=fake(DIAG, ALERT), tmp_path=tmp_path, on_start=seen.append)
+    assert seen == [state["run_id"]]
 
 
 def test_sync_called_and_failure_recorded(db, tmp_path):

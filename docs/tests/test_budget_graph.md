@@ -27,7 +27,7 @@ Run them from `backend/`:
 
 ## `test_full_run_one_time`
 
-**What it does:** On the one-time user, a run writes one `overspend` alert (`high`, `pending_user`, cause `one_time`, action `alert`, no proposed limit) and one advice row tied to the run. The `agent_runs` row finishes `ok` with every summary key, and the general-merchandise line's spent and pace are updated.
+**What it does:** On the one-time user, a run writes one `overspend` alert (`high`, `pending_user`, cause `one_time`, action `alert`, no proposed limit) and one advice row tied to the run. The `agent_runs` row finishes `ok` with every summary key (including the user's `decisions`), and the general-merchandise line's spent and pace are updated.
 
 **Why it's there:** It's the whole graph working end to end on the done-when's user, with a scripted model.
 
@@ -114,6 +114,42 @@ Run them from `backend/`:
 **What it does:** When the model diagnoses `seasonal` but picks `adjust_next_budget` (with a "$1600" message), the code stores a plain `alert` with no proposed limit and its own message, and marks the action as downgraded.
 
 **Why it's there:** It's the code guard behind the prompt change. Only a recurring cause may change next month's budget, and the model's message can't be kept because it quotes a limit it shouldn't have proposed.
+
+## `test_adjust_pauses_awaiting_user`
+
+**What it does:** With a checkpointer, the gym user's `adjust_next_budget` alert pauses the run. The state and the `agent_runs` row say `awaiting_user`, and the run is waiting on that alert's id.
+
+**Why it's there:** Architecture 6.6: a proposal that would change the budget waits for the user, through LangGraph `interrupt()` (TPC-20).
+
+## `test_resume_accept_finishes`
+
+**What it does:** Resuming that run with "accepted" finishes it as `ok`. The decision is in the run summary, and nothing is waiting any more.
+
+**Why it's there:** The user's click on Accept is what continues the paused run. Its decision has to be recorded where TPC-22's close and the eval can read it.
+
+## `test_two_adjusts_any_order`
+
+**What it does:** A run with two budget proposals (personal care and travel) waits for both. Dismissing the second one first leaves it waiting on the first, and accepting the first finishes it with both decisions recorded.
+
+**Why it's there:** The Alerts page lets the user decide in any order, so the run can't assume the order it asked in. Each resume carries an `[alert_id, decision]` pair, not a dict, because LangGraph reads a dict resume as interrupt id → value.
+
+## `test_alert_only_never_pauses`
+
+**What it does:** A run whose only action is a plain `alert` finishes `ok`, even with a checkpointer.
+
+**Why it's there:** Informational alerts change nothing, so nothing should wait on them, and a paused run per day would pile up.
+
+## `test_no_checkpointer_never_pauses`
+
+**What it does:** Without a checkpointer, an `adjust_next_budget` run finishes `ok`, as in TPC-19.
+
+**Why it's there:** There's nowhere to keep a paused run without a checkpointer, so callers that don't pass one keep the old behaviour.
+
+## `test_on_start_gets_run_id`
+
+**What it does:** `on_start` is called once with the new run's id.
+
+**Why it's there:** `POST /budget/run` answers with the run id straight away and lets the run continue in the background, because the Next.js proxy drops a request after 30 s of silence.
 
 ## `test_sync_called_and_failure_recorded`
 

@@ -50,3 +50,9 @@ Run them from `backend/`:
 **What it does:** With `--no-sync`, the report says `sync: skipped`.
 
 **Why it's there:** It makes the report state whether the data was refreshed at all.
+
+## `test_cli_awaiting_user`
+
+**What it does:** On the gym user, with a scripted `adjust_next_budget`, the CLI prints `status: awaiting_user (waiting for alert(s) …)`. Its checkpoints go to a file under `tmp_path`.
+
+**Why it's there:** A run paused for approval isn't finished, and the CLI has to say what it's waiting on. The CLI keeps its checkpoints in `BUDGET_CHECKPOINT_PATH`, so the API can resume the run later.

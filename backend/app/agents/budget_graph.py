@@ -1,15 +1,20 @@
 import argparse
+import sqlite3
 import sys
 from dataclasses import asdict
 from datetime import date, timedelta
 from typing import Callable, Optional, TypedDict
 
 from langchain_core.language_models import BaseChatModel
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.budget_llm import Action, Diagnosis, decide_messages, diagnose_messages, invoke_structured
+from app import config
 from app.agents.llm import get_chat_model
 from app.budget_engine.diagnose import overspend_facts, proposed_limit_cents
 from app.budget_engine.pace import BudgetLine as EngineLine, PaceResult, evaluate
@@ -42,6 +47,9 @@ class BudgetState(TypedDict, total=False):
     diagnoses: dict[str, Optional[dict]]
     actions: dict[str, dict]
     alert_ids: list[int]
+    adjust_alert_ids: list[int]   # alerts that would change the budget, so the run waits for the user
+    decisions: dict               # alert id -> accepted | dismissed, from the user
+    waiting_for: list[int]
     llm_failures: int
 
 
@@ -99,8 +107,8 @@ def _fallback_message(flag: dict) -> str:
             f"by day {flag['days_elapsed']}.")
 
 
-def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: PrivacyGateway,
-                       sync_fn: Optional[SyncFn] = None):
+def build_budget_graph(session_factory, *, model: Optional[BaseChatModel], gateway: Optional[PrivacyGateway],
+                       sync_fn: Optional[SyncFn] = None, checkpointer: Optional[BaseCheckpointSaver] = None):
     def today_of(state) -> date:
         return date.fromisoformat(state["today"])
 
@@ -192,7 +200,7 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
         return {"actions": actions, "llm_failures": failures}
 
     def log_advice(state: BudgetState) -> dict:
-        ids = []
+        ids, adjust = [], []
         with session_factory() as s:
             for flag in state["flags"]:
                 cat, act, d = flag["category"], state["actions"][flag["category"]], state["diagnoses"][flag["category"]]
@@ -207,8 +215,20 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
                 s.add(AdviceLog(user_id=state["user_id"], run_id=state["run_id"], alert_id=alert.id, category=cat,
                                 advice_text=act["message"]))
                 ids.append(alert.id)
+                if act["action"] == "adjust_next_budget":
+                    adjust.append(alert.id)
             s.commit()
-        return {"alert_ids": ids}
+        return {"alert_ids": ids, "adjust_alert_ids": adjust}
+
+    # architecture 6.6: a proposal that changes the budget waits for the user. each resume carries one
+    # [alert_id, decision] pair (not a dict: langgraph reads a dict resume as interrupt id -> value);
+    # decisions can arrive in any order, and the run finishes once all are in
+    def await_approval(state: BudgetState) -> dict:
+        decisions = dict(state.get("decisions") or {})
+        while set(state["adjust_alert_ids"]) - set(decisions):
+            alert_id, decision = interrupt({"waiting_for": sorted(set(state["adjust_alert_ids"]) - set(decisions))})
+            decisions[int(alert_id)] = decision
+        return {"decisions": decisions}
 
     def persist_state(state: BudgetState) -> dict:
         status = state["status"] if state.get("status") in ("no_budget", "period_ended") else "ok"
@@ -223,6 +243,7 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
             "uncategorized": state.get("uncategorized", 0),
             "sync": state.get("sync"),
             "llm_failures": state.get("llm_failures", 0),
+            "decisions": {str(k): v for k, v in (state.get("decisions") or {}).items()},
         }
         with session_factory() as s:
             run = s.get(AgentRun, state["run_id"])
@@ -236,11 +257,15 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
     def after_detect(state: BudgetState) -> str:
         return "diagnose" if state["flags"] else "persist_state"
 
+    # without a checkpointer there is nowhere to pause (the cli before tpc-20, tests), so nothing waits
+    def after_advice(state: BudgetState) -> str:
+        return "await_approval" if checkpointer is not None and state.get("adjust_alert_ids") else "persist_state"
+
     graph = StateGraph(BudgetState)
     for name, fn in (("load_state", load_state), ("sync", sync), ("categorize", categorize),
                      ("update_totals", update_totals), ("detect_overspend", detect_overspend),
                      ("diagnose", diagnose), ("decide_action", decide_action), ("log_advice", log_advice),
-                     ("persist_state", persist_state)):
+                     ("await_approval", await_approval), ("persist_state", persist_state)):
         graph.add_node(name, fn)
     graph.add_edge(START, "load_state")
     graph.add_conditional_edges("load_state", after_load, ["sync", "persist_state"])
@@ -250,33 +275,84 @@ def build_budget_graph(session_factory, *, model: BaseChatModel, gateway: Privac
     graph.add_conditional_edges("detect_overspend", after_detect, ["diagnose", "persist_state"])
     graph.add_edge("diagnose", "decide_action")
     graph.add_edge("decide_action", "log_advice")
-    graph.add_edge("log_advice", "persist_state")
+    graph.add_conditional_edges("log_advice", after_advice, ["await_approval", "persist_state"])
+    graph.add_edge("await_approval", "persist_state")
     graph.add_edge("persist_state", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
+
+
+def _thread(run_id: int) -> dict:
+    return {"configurable": {"thread_id": f"budget-{run_id}"}}
+
+
+def _interrupted(result: dict) -> Optional[list[int]]:
+    found = result.get("__interrupt__")
+    return sorted(i for it in found for i in it.value["waiting_for"]) if found else None
+
+
+def _mark(session_factory, run_id: int, status: str, summary: Optional[dict] = None, finished: bool = True) -> None:
+    with session_factory() as s:
+        row = s.get(AgentRun, run_id)
+        row.status = status
+        if finished:
+            row.finished_at = utcnow()
+        if summary is not None:
+            row.summary_json = summary
+        s.commit()
+
+
+# the alert ids a paused run is waiting on; [] when it isn't paused or its checkpoint is gone
+def waiting_for(session_factory, checkpointer: BaseCheckpointSaver, run_id: int) -> list[int]:
+    graph = build_budget_graph(session_factory, model=None, gateway=None, checkpointer=checkpointer)
+    snapshot = graph.get_state(_thread(run_id))
+    return sorted(i for task in snapshot.tasks for it in task.interrupts for i in it.value["waiting_for"])
 
 
 # one run for one user and date. the agent_runs row is written before the graph starts, so a crash in any
 # node still leaves a run marked error (then re-raised)
 def run_budget(session_factory, user_id: str, today: date, *, model: Optional[BaseChatModel] = None,
-               sync_fn: Optional[SyncFn] = None, audit_path=None) -> dict:
+               sync_fn: Optional[SyncFn] = None, audit_path=None,
+               checkpointer: Optional[BaseCheckpointSaver] = None,
+               on_start: Optional[Callable[[int], None]] = None) -> dict:
     model = model or get_chat_model()
     with session_factory() as s:
         run = AgentRun(user_id=user_id, graph="budget", status="running")
         s.add(run)
         s.commit()
         run_id = run.id
+    if on_start is not None:
+        on_start(run_id)        # the api answers with the id while the run goes on in the background
     with session_factory() as gs:
         gateway = PrivacyGateway(gs, user_id, audit_path=audit_path)    # one pseudonym per run
-        graph = build_budget_graph(session_factory, model=model, gateway=gateway, sync_fn=sync_fn)
+        graph = build_budget_graph(session_factory, model=model, gateway=gateway, sync_fn=sync_fn,
+                                   checkpointer=checkpointer)
         try:
-            return graph.invoke({"user_id": user_id, "today": today.isoformat(), "run_id": run_id,
-                                 "status": "running", "llm_failures": 0})
+            result = graph.invoke({"user_id": user_id, "today": today.isoformat(), "run_id": run_id,
+                                   "status": "running", "llm_failures": 0},
+                                  _thread(run_id) if checkpointer is not None else None)
         except Exception as exc:
-            with session_factory() as s:
-                failed = s.get(AgentRun, run_id)
-                failed.status, failed.finished_at, failed.summary_json = "error", utcnow(), {"error": type(exc).__name__}
-                s.commit()
+            _mark(session_factory, run_id, "error", {"error": type(exc).__name__})
             raise
+    waiting = _interrupted(result)
+    if waiting is not None:
+        _mark(session_factory, run_id, "awaiting_user", finished=False)
+        return {**result, "status": "awaiting_user", "waiting_for": waiting}
+    return {**result, "waiting_for": []}
+
+
+# continue a paused run with one decision. it pauses again while other proposals are still undecided
+def resume_budget_run(session_factory, run_id: int, alert_id: int, decision: str, *,
+                      checkpointer: BaseCheckpointSaver, model: Optional[BaseChatModel] = None) -> dict:
+    graph = build_budget_graph(session_factory, model=model, gateway=None, checkpointer=checkpointer)
+    try:
+        result = graph.invoke(Command(resume=[alert_id, decision]), _thread(run_id))
+    except Exception as exc:
+        _mark(session_factory, run_id, "error", {"error": type(exc).__name__})
+        raise
+    waiting = _interrupted(result)
+    if waiting is not None:
+        return {**result, "status": "awaiting_user", "waiting_for": waiting}
+    return {**result, "waiting_for": []}
 
 
 def _money(cents: Optional[int]) -> str:
@@ -292,7 +368,10 @@ def _sync_line(sync: Optional[dict]) -> str:
 
 
 def _print_report(state: dict) -> None:
-    print(f"run {state['run_id']}  status: {state['status']}  period: {state.get('period_id')}")
+    status = state["status"]
+    if status == "awaiting_user":
+        status += f" (waiting for alert(s) {', '.join(str(i) for i in state['waiting_for'])})"
+    print(f"run {state['run_id']}  status: {status}  period: {state.get('period_id')}")
     for r in state.get("results", []):
         pace = "-" if r["pace"] is None else f"{r['pace']:.2f}"
         mark = f"  FLAG ({r['reason']})" if r["flagged"] else ""
@@ -326,9 +405,11 @@ def main(argv=None, session_factory=None, model: Optional[BaseChatModel] = None)
     if session_factory is None:
         from app.db.session import SessionLocal
         session_factory = SessionLocal
+    config.BUDGET_CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    saver = SqliteSaver(sqlite3.connect(str(config.BUDGET_CHECKPOINT_PATH), check_same_thread=False))
     try:
         state = run_budget(session_factory, args.user, args.date, model=model or get_chat_model(model=args.model),
-                           sync_fn=None if args.no_sync else plaid_sync)
+                           sync_fn=None if args.no_sync else plaid_sync, checkpointer=saver)
     except Exception as exc:
         print(f"run failed: {type(exc).__name__}: {exc}")
         return 1
