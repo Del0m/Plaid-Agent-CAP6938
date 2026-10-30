@@ -155,7 +155,13 @@ def get_run(run_id: int, user: User = Depends(get_current_user)):
         status, summary = run.status, run.summary_json or {}
         alert_ids = sorted(a for a in s.scalars(select(AdviceLog.alert_id).where(AdviceLog.run_id == run_id))
                            if a is not None)
-    waiting = waiting_for(budget_hooks.session_factory, budget_hooks.get_checkpointer(), run_id) \
-        if status == "awaiting_user" else []
-    return RunOut(run_id=run_id, status=status, alert_ids=alert_ids, waiting_for=waiting,
-                  error=summary.get("error") if status == "error" else None)
+    waiting, error = [], summary.get("error") if status == "error" else None
+    if status == "awaiting_user":
+        try:
+            waiting = waiting_for(budget_hooks.session_factory, budget_hooks.get_checkpointer(), run_id)
+        except Exception:
+            logger.warning("budget run %s checkpoint unreadable", run_id, exc_info=True)
+        # a paused run with no readable checkpoint can never be continued; saying "waiting on 0" would be wrong
+        if not waiting:
+            status, error = "error", "The paused run's checkpoint is missing."
+    return RunOut(run_id=run_id, status=status, alert_ids=alert_ids, waiting_for=waiting, error=error)

@@ -89,7 +89,7 @@ def test_other_user_or_unknown_not_found(db, tmp_path):
 def test_accept_resumes_paused_run(db, tmp_path):
     ck = InMemorySaver()
     uid, aid, run_id = paused(db, tmp_path, ck)
-    decide_alert(db, uid, aid, "accepted", checkpointer=ck, model=ScriptedChatModel(replies=[]))
+    decide_alert(db, uid, aid, "accepted", checkpointer=ck)
     assert get(db, AgentRun, run_id).status == "ok"
     assert get(db, AgentRun, run_id).summary_json["decisions"] == {str(aid): "accepted"}
 
@@ -97,7 +97,7 @@ def test_accept_resumes_paused_run(db, tmp_path):
 def test_dismiss_resumes_too(db, tmp_path):
     ck = InMemorySaver()
     uid, aid, run_id = paused(db, tmp_path, ck)
-    decide_alert(db, uid, aid, "dismissed", checkpointer=ck, model=ScriptedChatModel(replies=[]))
+    decide_alert(db, uid, aid, "dismissed", checkpointer=ck)
     assert get(db, AgentRun, run_id).summary_json["decisions"] == {str(aid): "dismissed"}
 
 
@@ -126,7 +126,7 @@ def test_awaiting_approval_ids(db, tmp_path):
     ck = InMemorySaver()
     uid, aid, _ = paused(db, tmp_path, ck)
     assert awaiting_approval(db, uid, checkpointer=ck) == {aid}
-    decide_alert(db, uid, aid, "accepted", checkpointer=ck, model=ScriptedChatModel(replies=[]))
+    decide_alert(db, uid, aid, "accepted", checkpointer=ck)
     assert awaiting_approval(db, uid, checkpointer=ck) == set()
 
 
@@ -149,5 +149,54 @@ def test_failed_resume_keeps_run_awaiting(db, tmp_path, monkeypatch):
     ck = InMemorySaver()
     uid, aid, run_id = paused(db, tmp_path, ck)
     monkeypatch.setattr(budget_graph, "Command", broken)
-    assert decide_alert(db, uid, aid, "accepted", checkpointer=ck, model=ScriptedChatModel(replies=[])).status == "accepted"
+    assert decide_alert(db, uid, aid, "accepted", checkpointer=ck).status == "accepted"
     assert get(db, AgentRun, run_id).status == "awaiting_user"
+
+
+# review on #13: a resume that failed leaves the run paused on a decided alert; the next look at alerts finishes it
+def test_failed_resume_retried_on_next_load(db, tmp_path, monkeypatch):
+    ck = InMemorySaver()
+    uid, aid, run_id = paused(db, tmp_path, ck)
+    real = svc.resume_budget_run
+
+    def boom(*a, **k):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(svc, "resume_budget_run", boom)
+    decide_alert(db, uid, aid, "accepted", checkpointer=ck)
+    assert get(db, AgentRun, run_id).status == "awaiting_user"
+
+    monkeypatch.setattr(svc, "resume_budget_run", real)
+    assert awaiting_approval(db, uid, checkpointer=ck) == set()
+    assert get(db, AgentRun, run_id).status == "ok"
+    assert get(db, AgentRun, run_id).summary_json["decisions"] == {str(aid): "accepted"}
+
+
+# review on #13: a decision made after the run read its alerts but before it was marked awaiting_user
+# (decide_alert only resumes awaiting runs) is picked up as soon as the run is marked
+def test_decision_just_before_the_pause_is_picked_up(db, tmp_path, monkeypatch):
+    from app.agents import budget_graph
+    real_interrupt = budget_graph.interrupt
+
+    def click_then_pause(value):
+        for aid in value["waiting_for"]:
+            decide_alert(db, uid, aid, "dismissed")      # the run row still says "running": nothing is resumed
+        return real_interrupt(value)
+
+    monkeypatch.setattr(budget_graph, "interrupt", click_then_pause)
+    ck = InMemorySaver()
+    uid = seed(db, "overspend-recurring")
+    state = run_budget(db, uid, ONE, audit_path=tmp_path / "a.jsonl", checkpointer=ck, model=ScriptedChatModel(
+        replies=[reply(cause="recurring", evidence="A new gym."), reply(action="adjust_next_budget", message="x")]))
+    assert get(db, AgentRun, state["run_id"]).status == "ok"
+
+
+# review on #13: two decisions for one paused run that land before any resume both reach it
+def test_two_decisions_before_a_resume_both_count(db, tmp_path):
+    ck = InMemorySaver()
+    uid, aid, run_id = paused(db, tmp_path, ck)
+    with db() as s:
+        s.get(Alert, aid).status = "accepted"           # as if decided by a request whose resume never ran
+        s.commit()
+    assert awaiting_approval(db, uid, checkpointer=ck) == set()
+    assert get(db, AgentRun, run_id).summary_json["decisions"] == {str(aid): "accepted"}

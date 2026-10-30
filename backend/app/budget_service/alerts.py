@@ -1,13 +1,11 @@
 import logging
 from typing import Literal, Optional
 
-from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.agents.budget_graph import resume_budget_run, waiting_for
-from app.agents.llm import get_chat_model
 from app.db.models import AdviceLog, AgentRun, Alert, PlaidItem
 
 logger = logging.getLogger(__name__)
@@ -43,38 +41,56 @@ def _waiting(session_factory, checkpointer: BaseCheckpointSaver, run_id: int) ->
         return []
 
 
-def awaiting_approval(session_factory, user_id: str, *, checkpointer: BaseCheckpointSaver) -> set[int]:
+# a paused run whose proposals were decided without a resume reaching it (the resume failed, or two decisions
+# raced) is continued here. the run reads every decision from the alert rows, so one resume is enough
+def _resume_decided(session_factory, checkpointer: BaseCheckpointSaver, run_id: int) -> None:
+    waiting = _waiting(session_factory, checkpointer, run_id)
+    if not waiting:
+        return
     with session_factory() as s:
-        run_ids = s.scalars(select(AgentRun.id).where(AgentRun.user_id == user_id, AgentRun.graph == "budget",
-                                                      AgentRun.status == "awaiting_user")).all()
-    return {aid for run_id in run_ids for aid in _waiting(session_factory, checkpointer, run_id)}
+        decided = {a.id: a.status for a in s.scalars(select(Alert).where(
+            Alert.id.in_(waiting), Alert.status.in_(("accepted", "dismissed"))))}
+    if not decided:
+        return
+    alert_id = min(decided)
+    try:
+        resume_budget_run(session_factory, run_id, alert_id, decided[alert_id], checkpointer=checkpointer)
+    except Exception:
+        logger.warning("budget run %s resume failed", run_id, exc_info=True)
 
 
-# the decision is committed before the paused run is resumed, so a failing resume never loses the user's click
+def _paused_runs(session_factory, user_id: str) -> list[int]:
+    with session_factory() as s:
+        return s.scalars(select(AgentRun.id).where(AgentRun.user_id == user_id, AgentRun.graph == "budget",
+                                                   AgentRun.status == "awaiting_user")).all()
+
+
+# loading the alerts also finishes any paused run whose decisions are already in
+def awaiting_approval(session_factory, user_id: str, *, checkpointer: BaseCheckpointSaver) -> set[int]:
+    for run_id in _paused_runs(session_factory, user_id):
+        _resume_decided(session_factory, checkpointer, run_id)
+    return {aid for run_id in _paused_runs(session_factory, user_id)
+            for aid in _waiting(session_factory, checkpointer, run_id)}
+
+
+# the decision is committed before any paused run is resumed, so a failing resume never loses the user's click.
+# it's one conditional update: two requests for the same alert can't both pass a status check
 def decide_alert(session_factory, user_id: str, alert_id: int, decision: Decision, *,
-                 checkpointer: Optional[BaseCheckpointSaver] = None,
-                 model: Optional[BaseChatModel] = None) -> Alert:
+                 checkpointer: Optional[BaseCheckpointSaver] = None) -> Alert:
     with session_factory() as s:
         alert = s.get(Alert, alert_id)
         if alert is None or alert.user_id != user_id:
             raise AlertNotFound(alert_id)
-        if alert.status != "pending_user":
+        changed = s.execute(update(Alert).where(Alert.id == alert_id, Alert.status == "pending_user")
+                            .values(status=decision)).rowcount
+        if not changed:
+            s.rollback()
             raise AlertAlreadyDecided(alert_id)
-        alert.status = decision
-        advice = s.scalars(select(AdviceLog).where(AdviceLog.alert_id == alert_id)).all()
-        for row in advice:
+        for row in s.scalars(select(AdviceLog).where(AdviceLog.alert_id == alert_id)):
             row.outcome = decision
         s.commit()
-        run_ids = {row.run_id for row in advice if row.run_id is not None}
-        paused = s.scalars(select(AgentRun.id).where(AgentRun.id.in_(run_ids),
-                                                     AgentRun.status == "awaiting_user")).all()
+        s.refresh(alert)
     if checkpointer is not None:
-        for run_id in paused:
-            if alert_id not in _waiting(session_factory, checkpointer, run_id):
-                continue
-            try:
-                resume_budget_run(session_factory, run_id, alert_id, decision, checkpointer=checkpointer,
-                                  model=model or get_chat_model())
-            except Exception:
-                logger.warning("budget run %s resume failed", run_id, exc_info=True)
+        for run_id in _paused_runs(session_factory, user_id):
+            _resume_decided(session_factory, checkpointer, run_id)
     return alert

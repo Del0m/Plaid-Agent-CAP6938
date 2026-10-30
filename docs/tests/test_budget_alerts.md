@@ -86,3 +86,27 @@ Run them from `backend/`:
 **What it does:** When the resume fails before anything runs (the thread is still paused), the decision is saved and the run stays `awaiting_user`.
 
 **Why it's there:** It was found in the TPC-20 review. The spec said both "a failed resume leaves the run waiting" and "a failed resume marks it error". The rule now: a run still paused keeps waiting, along with its other proposals, and can be resumed again. Only a run that got past the pause and then failed is `error`.
+
+## `test_failed_resume_retried_on_next_load`
+
+**What it does:** Makes the resume fail on accept, so the alert is accepted but the run stays `awaiting_user`. With the resume working again, `awaiting_approval` (what `GET /alerts` calls) returns nothing, and the run is `ok` with the decision recorded.
+
+**Why it's there:** The decision is committed before the resume, and an accepted alert can't be decided again (409). So a resume that failed once, on "database is locked" or a model error, left the run waiting forever on an alert nobody could click. The next load now finishes it. The review on #13 found it.
+
+## `test_decision_just_before_the_pause_is_picked_up`
+
+**What it does:** Wraps `interrupt` so the alert is dismissed just before the run pauses, while its row still says `running`, so `decide_alert` resumes nothing. The run still ends `ok`.
+
+**Why it's there:** `log_advice` commits the alerts a few steps before the run is marked `awaiting_user`. A click in that window found no paused run, and the run then paused on an alert that was already decided. `run_budget` now checks for decided proposals right after marking the run. The review on #13 found it.
+
+## `test_two_decisions_before_a_resume_both_count`
+
+**What it does:** Accepts a paused run's alert directly in the database, as a request whose resume never ran would, then loads the alerts. The run finishes with the decision recorded.
+
+**Why it's there:** `await_approval` used to take decisions only from resume payloads. Two decisions for one thread could each resume the same checkpoint, and one would be lost. The run now reads every decision from the alert rows, and resumes for one run take a lock, so a decision counts however it arrives. The review on #13 found it.
+
+---
+
+## Not covered
+
+- **Two requests deciding one alert at the same instant.** `decide_alert` sets the status with one conditional update (`WHERE status = 'pending_user'`), so only one can win. A test can't make two requests overlap between the read and the write without real concurrency, so the race itself isn't tested.

@@ -215,3 +215,15 @@ SQLite gives the new run the same id, and it still pauses, with its alert pendin
 **What it does:** A user has an account but no stored transactions, and the sync stub adds July–September spending. The run ends `ok` and creates one budget period.
 
 **Why it's there:** `load_state` (which fits the first budget) ran before `sync`, and a user with no budget skipped straight to `persist_state`. So a user whose first webhook sync failed was never synced by the agent, and every run ended `no_budget`. Sync now runs first. The review on #12 found it.
+
+## `test_finished_runs_leave_no_checkpoint`
+
+**What it does:** A paused run keeps its checkpoint thread, and the thread is gone once the run is resumed to the end. A run that never pauses leaves no thread.
+
+**Why it's there:** Compiling with the checkpointer saved the full state (unscrubbed merchant facts and prompt contexts) for every run, in a plaintext SQLite file that was never cleaned. That's a second, unmanaged copy of transaction data, and the file grew without bound. Only a paused run needs its thread. The review on #13 found it.
+
+## `test_checkpointer_failure_marks_error`
+
+**What it does:** A checkpointer whose `delete_thread` raises makes `run_budget` raise, and the run row is `error`.
+
+**Why it's there:** `delete_thread` and the gateway were set up between the run row's insert and the `try`. A failure there left the row `running` until the next server restart, against the "a crash still leaves a run marked error" rule. All setup now sits inside the `try`. The review on #13 found it.

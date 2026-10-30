@@ -60,7 +60,7 @@ def list_alerts(status: Literal["pending_user", "all"] = "all", user: User = Dep
 def _decide(alert_id: int, decision: Literal["accepted", "dismissed"], user: User) -> AlertOut:
     try:
         decide_alert(budget_hooks.session_factory, user.id, alert_id, decision,
-                     checkpointer=budget_hooks.get_checkpointer(), model=budget_hooks.make_model())
+                     checkpointer=budget_hooks.get_checkpointer())
     except AlertNotFound:
         raise HTTPException(404, "Alert not found.")
     except AlertAlreadyDecided:

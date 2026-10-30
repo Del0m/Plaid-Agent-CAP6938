@@ -287,13 +287,16 @@ Anything that changes the user's money or their budget without being asked goes 
 **As built (TPC-20):**
 - **Pausing.** A run that wrote any `adjust_next_budget` alert goes to `await_approval`, which waits on `interrupt({"waiting_for": [alert ids]})`. The run reads `awaiting_user`. Plain `alert` and `suggest_cuts` alerts don't pause.
 - **Deciding.** `budget_service/alerts.py` `decide_alert`:
-  1. commits the decision on the alert, and as the outcome on its advice rows;
-  2. then resumes the run with `Command(resume=[alert_id, decision])`. A pair, because LangGraph reads a dict resume value as interrupt id → value.
+  1. commits the decision on the alert, and as the outcome on its advice rows, in one conditional update (`WHERE status = 'pending_user'`), so two requests for one alert can't both pass the check;
+  2. then resumes the run with `Command(resume=[alert_id, decision])`. A pair, because LangGraph reads a dict resume value as interrupt id → value. No model is built: nothing after the pause calls one.
 
   Decisions can arrive in any order. The run finishes once all are in, recording them in its summary. If the resume fails, the decision is still saved, and the run stays `awaiting_user`.
+- **The alert rows are the source of truth.** `await_approval` reads each proposal's status from its alert row, and treats a resume as a prompt to look again. So a decision still counts if no resume reached the run: the resume failed, the click landed before the run was marked `awaiting_user`, or two decisions raced. Resumes for one run take a per-run lock. Any paused run whose proposals are already decided is resumed in three places: after `run_budget` marks it `awaiting_user`, after every decision, and whenever `GET /alerts` loads.
 - **Failures and restarts:**
   - A resume that fails while the thread is still paused leaves the run `awaiting_user`; only a run that got past the pause and then failed is `error`.
   - A new run id clears any old checkpoint thread first, because SQLite reuses deleted run ids.
+  - A run deletes its checkpoint thread when it finishes. Only a paused run keeps one, because the state holds unscrubbed facts.
+  - `GET /budget/runs/{id}` reports a paused run whose checkpoint is missing or unreadable as `error`, instead of failing or saying it's waiting on 0 proposals.
   - At startup, budget runs left `running` by a stopped server become `error` ("Interrupted").
 - **Applying.** An accepted proposal isn't applied here. TPC-22's close applies `proposed_limit_cents`, and should treat a proposal never decided as dismissed.
 
@@ -711,6 +714,7 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-28 | The diagnose prompt checks the causes in order (recurring, then one-time, then seasonal) against facts the code names outright: each merchant's `pattern` (`new` / `started_recently` / `regular`) and the largest purchase's ratio to its merchant's usual month | Live, the model read "seen in 1 earlier month" as new and called the gym `one_time`, and a review probe showed a $520 one-off at a regular shop called `recurring`. With the named facts, all four planted users are right, twice in a row |
 | 2026-10-28 | Only a recurring cause may `adjust_next_budget` (a code guard downgrades the rest to an `alert`); a recurring proposal is the old limit plus the new merchants' typical month | Review, reproduced live: holiday shopping got a $1,600 January limit, and the gym got $205 from a straight-line projection of charges that had already posted. Now it's $135 |
 | 2026-10-30 | Merchant patterns are judged over the history months the user has data for, with a fourth pattern `occasional`; the recurring proposal adds new merchants' typical month to the category's baseline without them; an unreachable model falls back to code-written alerts; sync runs before `load_state` | Review on #12: with short history every merchant was `started_recently` and the proposal counted a merchant already in the median twice; an Ollama outage hid every overspend that day; a user with no budget was never synced |
+| 2026-10-30 | A paused budget run reads its decisions from the alert rows, and any paused run whose proposals are decided is resumed (after the pause is marked, after a decision, on `GET /alerts`), one resume at a time per run | Review on #13: a failed resume, a click before `awaiting_user`, or two racing decisions each left a run waiting forever on an alert that could no longer be decided |
 | 2026-10-28 | `categorize` only counts uncategorized transactions in TPC-19; unbudgeted spending is listed, not alerted | Sandbox and synthetic data are always categorized, and nothing in the done-when exercises it. A category with no line isn't overspent against anything |
 | 2026-10-28 | Initial budgets keep the **median** (× 1.05 for flexible lines) | Measured on five synthetic users: pooled MAPE 7.1% (median) vs 17.7% (mean). The mean is 1-2 points better when there's no outlier but 58.8% vs 9.4% with one trip, and it budgets one-off purchases. `eval/results/2026-10-28/budget_accuracy/` |
 | 2026-10-28 | Only proposals that change the budget (`adjust_next_budget`) pause the run with `interrupt()`; `alert` and `suggest_cuts` don't | Architecture 6.6. Informational alerts have nothing to approve, and a paused run per day would pile up |

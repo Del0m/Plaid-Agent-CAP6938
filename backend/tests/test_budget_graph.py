@@ -206,7 +206,7 @@ def test_resume_accept_finishes(db, tmp_path):
     uid, ck = seed(db, "overspend-recurring"), InMemorySaver()
     state = run(db, uid, model=fake(RECUR, ADJUST), tmp_path=tmp_path, checkpointer=ck)
     [alert] = rows(db, Alert)
-    done = resume_budget_run(db, state["run_id"], alert.id, "accepted", checkpointer=ck, model=fake())
+    done = resume_budget_run(db, state["run_id"], alert.id, "accepted", checkpointer=ck)
     assert done["status"] == "ok"
     [agent_run] = rows(db, AgentRun)
     assert agent_run.status == "ok" and agent_run.summary_json["decisions"] == {str(alert.id): "accepted"}
@@ -226,9 +226,9 @@ def test_two_adjusts_any_order(db, tmp_path):
     state = run(db, uid, model=fake(RECUR, RECUR, ADJUST, ADJUST), tmp_path=tmp_path, checkpointer=ck)
     first, second = sorted(a.id for a in rows(db, Alert))
     assert sorted(state["waiting_for"]) == [first, second]
-    mid = resume_budget_run(db, state["run_id"], second, "dismissed", checkpointer=ck, model=fake())
+    mid = resume_budget_run(db, state["run_id"], second, "dismissed", checkpointer=ck)
     assert (mid["status"], mid["waiting_for"]) == ("awaiting_user", [first])
-    assert resume_budget_run(db, state["run_id"], first, "accepted", checkpointer=ck, model=fake())["status"] == "ok"
+    assert resume_budget_run(db, state["run_id"], first, "accepted", checkpointer=ck)["status"] == "ok"
     assert rows(db, AgentRun)[0].summary_json["decisions"] == {str(first): "accepted", str(second): "dismissed"}
 
 
@@ -240,7 +240,7 @@ def test_reused_run_id_starts_clean(db, tmp_path):
     uid = seed(db, "overspend-recurring")
     first = run(db, uid, model=fake(RECUR, ADJUST), tmp_path=tmp_path, checkpointer=ck)
     [alert] = rows(db, Alert)
-    resume_budget_run(db, first["run_id"], alert.id, "accepted", checkpointer=ck, model=fake())
+    resume_budget_run(db, first["run_id"], alert.id, "accepted", checkpointer=ck)
     with db() as s:
         delete_user(s, uid)
     uid = seed(db, "overspend-recurring")
@@ -384,3 +384,30 @@ def test_no_budget_syncs_before_fitting(db, tmp_path):
     state = run(db, "u1", model=fake(), tmp_path=tmp_path, sync_fn=sync_history)
     assert state["status"] == "ok"
     assert len(rows(db, BudgetPeriod, user_id="u1")) == 1
+
+
+# review on #13: a run that finishes without pausing leaves no checkpoint (it held unscrubbed facts, forever)
+def test_finished_runs_leave_no_checkpoint(db, tmp_path):
+    from app.agents.budget_graph import _thread
+    uid, ck = seed(db, "overspend-recurring"), InMemorySaver()
+    state = run(db, uid, model=fake(RECUR, ADJUST), tmp_path=tmp_path, checkpointer=ck)
+    assert ck.get_tuple(_thread(state["run_id"])) is not None        # paused: it has to keep it
+    [alert] = rows(db, Alert)
+    resume_budget_run(db, state["run_id"], alert.id, "accepted", checkpointer=ck)
+    assert ck.get_tuple(_thread(state["run_id"])) is None
+
+    uid = seed(db, "overspend-one-time")
+    done = run(db, uid, model=fake(DIAG, ALERT), tmp_path=tmp_path, checkpointer=ck)
+    assert ck.get_tuple(_thread(done["run_id"])) is None
+
+
+# review on #13: setup that fails before the graph starts still marks the run, not leaves it "running"
+def test_checkpointer_failure_marks_error(db, tmp_path):
+    class Broken(InMemorySaver):
+        def delete_thread(self, thread_id):
+            raise RuntimeError("database is locked")
+
+    uid = seed(db, "overspend-one-time")
+    with pytest.raises(RuntimeError):
+        run(db, uid, model=fake(), tmp_path=tmp_path, checkpointer=Broken())
+    assert rows(db, AgentRun)[0].status == "error"

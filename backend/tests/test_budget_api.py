@@ -352,3 +352,34 @@ def test_startup_closes_interrupted_runs(api):
     with api.db() as s:
         runs = {r.status: r.summary_json for r in s.query(AgentRun)}
     assert runs == {"error": {"error": "Interrupted"}, "awaiting_user": {}}
+
+
+# review on #13: an unreadable or missing checkpoint is reported, not a 500 or "waiting on 0 proposals"
+def test_run_status_with_a_broken_checkpoint(api):
+    api.seed("overspend-recurring")
+    api.models.append(ScriptedChatModel(replies=[RECUR, ADJUST]))
+    run_id = start(api)
+    wait(api, run_id)
+
+    class Unreadable(InMemorySaver):
+        def get_tuple(self, config):
+            raise RuntimeError("no such table")
+
+    for ck in (InMemorySaver(), Unreadable()):
+        api.mp.setattr(budget_hooks, "get_checkpointer", lambda ck=ck: ck)
+        r = api.client.get(f"/budget/runs/{run_id}")
+        assert r.status_code == 200
+        assert (r.json()["status"], r.json()["waiting_for"]) == ("error", [])
+
+
+# review on #13: deciding never runs a model, so a broken model setting can't block a decision
+def test_decide_needs_no_model(api):
+    uid = api.seed("overspend-recurring")
+    api.run(uid, RECUR, ADJUST, checkpointer=api.ck)
+    [aid] = alert_ids(api.db)
+
+    def no_model():
+        raise RuntimeError("bad OLLAMA_MODEL")
+
+    api.mp.setattr(budget_hooks, "make_model", no_model)
+    assert api.client.post(f"/alerts/{aid}/accept").status_code == 200

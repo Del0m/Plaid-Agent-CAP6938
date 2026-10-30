@@ -1,6 +1,8 @@
 import argparse
+import logging
 import sqlite3
 import sys
+import threading
 from dataclasses import asdict
 from datetime import date, timedelta
 from typing import Callable, Optional, TypedDict
@@ -24,6 +26,8 @@ from app.budget_service.initialize import initialize_budget, load_txns
 from app.db.models import AdviceLog, AgentRun, Alert, BudgetPeriod, PlaidItem, utcnow
 from app.plaid_service.sync import sync_item
 from app.privacy.gateway import PrivacyGateway
+
+logger = logging.getLogger(__name__)
 
 # the daily budget agent (architecture 6.1-6.2, spec: tpc-19). the budget engine does the maths; the llm
 # names each overspend's cause from facts the code computed and picks an action. an llm that can't answer
@@ -223,15 +227,20 @@ def build_budget_graph(session_factory, *, model: Optional[BaseChatModel], gatew
             s.commit()
         return {"alert_ids": ids, "adjust_alert_ids": adjust}
 
-    # architecture 6.6: a proposal that changes the budget waits for the user. each resume carries one
-    # [alert_id, decision] pair (not a dict: langgraph reads a dict resume as interrupt id -> value);
-    # decisions can arrive in any order, and the run finishes once all are in
+    # architecture 6.6: a proposal that changes the budget waits for the user. the alert rows are the source of
+    # truth: a decision recorded while no resume reached the run (the resume failed, or the click landed before
+    # the pause) still counts. each resume carries one [alert_id, decision] pair (not a dict: langgraph reads a
+    # dict resume as interrupt id -> value); decisions can arrive in any order, and the run finishes once all are in
     def await_approval(state: BudgetState) -> dict:
+        ids = state["adjust_alert_ids"]
         decisions = dict(state.get("decisions") or {})
-        while set(state["adjust_alert_ids"]) - set(decisions):
-            alert_id, decision = interrupt({"waiting_for": sorted(set(state["adjust_alert_ids"]) - set(decisions))})
-            decisions[int(alert_id)] = decision
-        return {"decisions": decisions}
+        while True:
+            decisions.update(_decided(session_factory, ids))
+            pending = sorted(set(ids) - set(decisions))
+            if not pending:
+                return {"decisions": decisions}
+            alert_id, decision = interrupt({"waiting_for": pending})
+            decisions.setdefault(int(alert_id), decision)
 
     def persist_state(state: BudgetState) -> dict:
         status = state["status"] if state.get("status") in ("no_budget", "period_ended") else "ok"
@@ -285,6 +294,25 @@ def build_budget_graph(session_factory, *, model: Optional[BaseChatModel], gatew
     return graph.compile(checkpointer=checkpointer)
 
 
+# the decided ones among these alerts, from their rows
+def _decided(session_factory, alert_ids) -> dict[int, str]:
+    with session_factory() as s:
+        rows = s.scalars(select(Alert).where(Alert.id.in_(list(alert_ids)),
+                                             Alert.status.in_(("accepted", "dismissed")))).all()
+        return {a.id: a.status for a in rows}
+
+
+# one resume at a time per run (in-process, one api worker): two decisions for one paused thread would otherwise
+# continue the same checkpoint at once, and one would be lost
+_resume_locks: dict[int, threading.Lock] = {}
+_resume_locks_guard = threading.Lock()
+
+
+def _resume_lock(run_id: int) -> threading.Lock:
+    with _resume_locks_guard:
+        return _resume_locks.setdefault(run_id, threading.Lock())
+
+
 def _thread(run_id: int) -> dict:
     return {"configurable": {"thread_id": f"budget-{run_id}"}}
 
@@ -324,46 +352,68 @@ def run_budget(session_factory, user_id: str, today: date, *, model: Optional[Ba
         s.add(run)
         s.commit()
         run_id = run.id
-    if checkpointer is not None:
-        # sqlite reuses the id of a deleted run (seed --replace), and a thread left from that run would hand its
-        # decisions to this one, skipping the pause. a new run id never has history of its own
-        checkpointer.delete_thread(_thread(run_id)["configurable"]["thread_id"])
-    if on_start is not None:
-        on_start(run_id)        # the api answers with the id while the run goes on in the background
-    with session_factory() as gs:
-        gateway = PrivacyGateway(gs, user_id, audit_path=audit_path)    # one pseudonym per run
-        graph = build_budget_graph(session_factory, model=model, gateway=gateway, sync_fn=sync_fn,
-                                   checkpointer=checkpointer)
-        try:
+    thread = _thread(run_id)["configurable"]["thread_id"]
+    try:
+        if checkpointer is not None:
+            # sqlite reuses the id of a deleted run (seed --replace), and a thread left from that run would hand
+            # its decisions to this one, skipping the pause. a new run id never has history of its own
+            checkpointer.delete_thread(thread)
+        if on_start is not None:
+            on_start(run_id)        # the api answers with the id while the run goes on in the background
+        with session_factory() as gs:
+            gateway = PrivacyGateway(gs, user_id, audit_path=audit_path)    # one pseudonym per run
+            graph = build_budget_graph(session_factory, model=model, gateway=gateway, sync_fn=sync_fn,
+                                       checkpointer=checkpointer)
             result = graph.invoke({"user_id": user_id, "today": today.isoformat(), "run_id": run_id,
                                    "status": "running", "llm_failures": 0},
                                   _thread(run_id) if checkpointer is not None else None)
-        except Exception as exc:
-            _mark(session_factory, run_id, "error", {"error": type(exc).__name__})
-            raise
-    waiting = _interrupted(result)
-    if waiting is not None:
-        _mark(session_factory, run_id, "awaiting_user", finished=False)
-        return {**result, "status": "awaiting_user", "waiting_for": waiting}
-    return {**result, "waiting_for": []}
-
-
-# continue a paused run with one decision. it pauses again while other proposals are still undecided
-def resume_budget_run(session_factory, run_id: int, alert_id: int, decision: str, *,
-                      checkpointer: BaseCheckpointSaver, model: Optional[BaseChatModel] = None) -> dict:
-    graph = build_budget_graph(session_factory, model=model, gateway=None, checkpointer=checkpointer)
-    try:
-        result = graph.invoke(Command(resume=[alert_id, decision]), _thread(run_id))
     except Exception as exc:
-        # still paused means nothing ran: the run keeps waiting (its other proposals too) and can be resumed
-        # again. only a run that got past the pause and then failed is an error
-        if not waiting_for(session_factory, checkpointer, run_id):
-            _mark(session_factory, run_id, "error", {"error": type(exc).__name__})
+        _mark(session_factory, run_id, "error", {"error": type(exc).__name__})
         raise
     waiting = _interrupted(result)
-    if waiting is not None:
-        return {**result, "status": "awaiting_user", "waiting_for": waiting}
-    return {**result, "waiting_for": []}
+    if waiting is None:
+        # only a paused run needs its checkpoint; a finished one would keep its unscrubbed facts forever
+        if checkpointer is not None:
+            checkpointer.delete_thread(thread)
+        return {**result, "waiting_for": []}
+    _mark(session_factory, run_id, "awaiting_user", finished=False)
+    # a decision made after the run read its alerts but before this mark found no awaiting run to resume
+    decided = _decided(session_factory, waiting)
+    if decided:
+        alert_id = min(decided)
+        try:
+            return {**result, **resume_budget_run(session_factory, run_id, alert_id, decided[alert_id],
+                                                  checkpointer=checkpointer)}
+        except Exception:
+            logger.warning("budget run %s: resume of an early decision failed", run_id, exc_info=True)
+    return {**result, "status": "awaiting_user", "waiting_for": waiting}
+
+
+# continue a paused run with one decision. it pauses again while other proposals are still undecided. no model:
+# nothing after the pause calls one, so a broken model setting can't block a decision
+def resume_budget_run(session_factory, run_id: int, alert_id: int, decision: str, *,
+                      checkpointer: BaseCheckpointSaver) -> dict:
+    with _resume_lock(run_id):
+        # another resume may have finished the run (or taken this decision) while this one waited for the lock
+        if alert_id not in waiting_for(session_factory, checkpointer, run_id):
+            with session_factory() as s:
+                status = s.get(AgentRun, run_id).status
+            return {"run_id": run_id, "status": status,
+                    "waiting_for": waiting_for(session_factory, checkpointer, run_id)}
+        graph = build_budget_graph(session_factory, model=None, gateway=None, checkpointer=checkpointer)
+        try:
+            result = graph.invoke(Command(resume=[alert_id, decision]), _thread(run_id))
+        except Exception as exc:
+            # still paused means nothing ran: the run keeps waiting (its other proposals too) and can be resumed
+            # again. only a run that got past the pause and then failed is an error
+            if not waiting_for(session_factory, checkpointer, run_id):
+                _mark(session_factory, run_id, "error", {"error": type(exc).__name__})
+            raise
+        waiting = _interrupted(result)
+        if waiting is not None:
+            return {**result, "status": "awaiting_user", "waiting_for": waiting}
+        checkpointer.delete_thread(_thread(run_id)["configurable"]["thread_id"])
+        return {**result, "waiting_for": []}
 
 
 def _money(cents: Optional[int]) -> str:

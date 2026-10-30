@@ -187,3 +187,15 @@ Run them from `backend/`:
 **What it does:** On startup, a budget run still marked `running` becomes `error` ("Interrupted"), and an `awaiting_user` run is left alone.
 
 **Why it's there:** It was found in the TPC-20 review. A run's thread dies with the server, and its row would otherwise say `running` forever, which keeps the page polling. A paused run doesn't need its thread; it lives in the checkpoint.
+
+## `test_run_status_with_a_broken_checkpoint`
+
+**What it does:** Pauses a run, then reads `GET /budget/runs/{id}` with an empty checkpointer and with one that raises. Both give a 200 with `status: "error"` and `waiting_for: []`.
+
+**Why it's there:** The route called `waiting_for` without the guard `GET /alerts` uses. An unreadable checkpoint gave a 500, which stopped the page's polling. A missing thread reported `awaiting_user` with no proposals, and the page showed "Waiting for your approval on 0 proposals" forever. The review on #13 found it.
+
+## `test_decide_needs_no_model`
+
+**What it does:** Makes `budget_hooks.make_model` raise, then accepts a paused run's proposal. The accept returns 200.
+
+**Why it's there:** Every accept or dismiss built a chat model that was never used, because no LLM step runs after the pause. A model configuration error then blocked the decision. `resume_budget_run` no longer takes a model. The review on #13 found it.

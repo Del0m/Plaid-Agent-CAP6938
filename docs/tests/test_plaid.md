@@ -12,6 +12,7 @@ These tests cover linking a bank through Plaid: getting a link token, exchanging
 |---|---|---|
 | `db` | Gives each test its own empty in-memory SQLite database and returns a session factory for it. | Tests never touch `dev.db` and can't see each other's rows. |
 | `client` | A FastAPI `TestClient` with `get_session` overridden to use `db`. | Requests run through the real routes, dependencies and models, just against the throwaway database. |
+| `checkpoint_paths` (autouse) | Points `BUDGET_CHECKPOINT_PATH` and `CHAT_CHECKPOINT_PATH` at the test's `tmp_path`, and clears the cached savers before and after. | Code that opens config's path, such as the budget CLI, used to write to and delete threads in the developer's `backend/data/*.db` (review on #13). |
 
 `app.security` refuses to import without a `FERNET_KEY`, so `conftest.py` generates a temporary one when none is set. A key from your `.env` takes precedence.
 
