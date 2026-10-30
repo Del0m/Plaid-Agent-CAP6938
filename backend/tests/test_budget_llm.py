@@ -50,9 +50,17 @@ def test_whitespace_text_is_invalid():
     assert len(m.seen) == 2
 
 
-def test_model_error_propagates():
-    with pytest.raises(ConnectionError):
-        invoke_structured(model(ConnectionError("down")), Diagnosis, diagnose_messages("{}"))
+# review on #12: an unreachable model gives None at once (no retry), so the graph writes its fallback alert
+def test_unreachable_model_returns_none():
+    m = model(ConnectionError("down"), json.dumps({"cause": "one_time", "evidence": "x"}))
+    assert invoke_structured(m, Diagnosis, diagnose_messages("{}")) is None
+    assert len(m.seen) == 1
+
+
+# anything other than the model being unreachable is a bug, and still fails the run
+def test_other_model_error_propagates():
+    with pytest.raises(KeyError):
+        invoke_structured(model(KeyError("bug")), Diagnosis, diagnose_messages("{}"))
 
 
 def test_action_schema():

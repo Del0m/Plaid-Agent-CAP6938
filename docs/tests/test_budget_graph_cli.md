@@ -29,9 +29,9 @@ Run them from `backend/`:
 
 ## `test_cli_error_exit`
 
-**What it does:** When the model raises a connection error, the CLI prints the error type and returns 1.
+**What it does:** When the run crashes (here `evaluate` raises `RuntimeError`), the CLI prints the error type and returns 1.
 
-**Why it's there:** An Ollama outage should be a clear message and a failing exit code that a scheduler or script can act on, not a traceback.
+**Why it's there:** A crash should be a clear message and a failing exit code that a scheduler or script can act on, not a traceback. An Ollama outage used to be the example. Since the review on #12, an outage ends in fallback alerts instead of a crash (`test_model_unreachable_still_alerts`), so the test now crashes the run elsewhere.
 
 ## `test_cli_bad_date`
 

@@ -226,3 +226,31 @@ def test_live_planted_causes(db, tmp_path):
             assert state["actions"][cat]["action"] == "adjust_next_budget", p.id
         else:
             assert state["actions"][cat]["action"] not in ("adjust_next_budget", "no_op"), p.id
+
+
+# review on #12: ollama down or timing out must not hide an overspend; each flag still gets a plain alert
+def test_model_unreachable_still_alerts(db, tmp_path):
+    uid = seed(db, "overspend-one-time")
+    state = run(db, uid, model=fake(ConnectionError("down"), ConnectionError("down")), tmp_path=tmp_path)
+    [alert] = rows(db, Alert)
+    assert alert.action == "alert" and alert.cause is None
+    assert alert.message.startswith("General merchandise is over its $")
+    assert state["status"] == "ok" and state["llm_failures"] == 2
+
+
+# review on #12: a user with no budget yet is synced first, so the budget can be fit on fresh data
+def test_no_budget_syncs_before_fitting(db, tmp_path):
+    with db() as s:
+        add_account(s, add_user(s, "u1", "u1@x"), "Checking")
+        s.commit()
+
+    def sync_history(session, user_id):
+        acct = session.query(Account).filter_by(user_id=user_id).one()
+        for m in (7, 8, 9):
+            add_txn(session, acct, 40000, "FOOD_AND_DRINK", day=date(2026, m, 2))
+        session.commit()
+        return {"items": 1, "errors": []}
+
+    state = run(db, "u1", model=fake(), tmp_path=tmp_path, sync_fn=sync_history)
+    assert state["status"] == "ok"
+    assert len(rows(db, BudgetPeriod, user_id="u1")) == 1

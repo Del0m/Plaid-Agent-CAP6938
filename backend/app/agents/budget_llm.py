@@ -1,13 +1,18 @@
+import logging
 import re
 from typing import Annotated, Literal, Optional
 
+import httpx
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from ollama import ResponseError
 from pydantic import BaseModel, StringConstraints, ValidationError
 
 # the budget graph's two llm calls (spec: tpc-19): name an overspend's cause, then pick what to do.
 # the facts come from the privacy gateway as a json string; the model returns json that pydantic checks,
 # and the graph falls back to a plain alert when it can't
+
+logger = logging.getLogger(__name__)
 
 DIAGNOSE_PROMPT = (
     "You review one overspent budget category for a personal finance app. The facts below were computed "
@@ -15,7 +20,7 @@ DIAGNOSE_PROMPT = (
     "1. recurring: a merchant whose pattern is started_recently (it began charging since the budget was set "
     "and now charges every month) explains much of the spending, at about its typical amount.\n"
     "2. one_time: otherwise, the largest purchase explains most of the spending (share_of_spent above 0.5) "
-    "and its merchant's pattern is new, or it is far above what that merchant usually comes to (times_typical "
+    "and its merchant's pattern is new or occasional, or it is far above what that merchant usually comes to (times_typical "
     "of 2 or more). A big purchase at a regular shop is one_time, not recurring.\n"
     "3. seasonal: otherwise, spending spread across several purchases with no single one dominating, in a "
     "month with typical seasonal spending (holidays in November and December, back-to-school in August and "
@@ -36,6 +41,9 @@ DECIDE_PROMPT = (
     "Answer in JSON with action and message."
 )
 
+# ollama not running, timing out or refusing the request; anything else is a bug and still fails the run
+UNREACHABLE = (httpx.HTTPError, ConnectionError, TimeoutError, ResponseError)
+
 _FENCE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL)
 
 
@@ -54,12 +62,17 @@ class Action(BaseModel):
 
 
 # ollama's `format` constrains decoding to the schema; pydantic still checks the reply, and a bad reply gets
-# one more try. connection errors propagate: the run fails and the next daily run retries
+# one more try. a model that can't be reached (down, timed out) gives None at once, like a bad reply, so the
+# graph still writes its plain fallback alert: an outage must not hide an overspend
 def invoke_structured(model: BaseChatModel, schema: type[BaseModel], messages: list,
                       retries: int = 1) -> Optional[BaseModel]:
     bound = model.bind(format=schema.model_json_schema())
     for _ in range(retries + 1):
-        text = str(bound.invoke(messages).content)
+        try:
+            text = str(bound.invoke(messages).content)
+        except UNREACHABLE as exc:
+            logger.warning("budget llm unreachable: %s", type(exc).__name__)
+            return None
         fenced = _FENCE.match(text)
         try:
             return schema.model_validate_json(fenced.group(1) if fenced else text)

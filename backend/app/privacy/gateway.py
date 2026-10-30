@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .. import config
 from ..budget_engine.diagnose import OverspendFacts
-from ..budget_engine.txns import Txn, add_months
+from ..budget_engine.txns import Txn, add_months, spending
 from ..db.models import Account, Liability, Transaction
 from ..finance import avalanche_key
 from .scrub import scrub_account_name, scrub_merchant
@@ -150,7 +150,8 @@ class PrivacyGateway:
     # one flagged category only (architecture section 7: a dining diagnosis sees dining). built from the facts
     # the budget engine computed, field by field; merchants scrubbed, money in dollars
     def _diagnose(self, facts: OverspendFacts, transactions: list[Txn]) -> dict:
-        rows = sorted((t for t in transactions if t.category == facts.category), key=lambda t: t.date,
+        # the same spending filter as the facts: a card payment left out of "spent" isn't quoted as evidence
+        rows = sorted((t for t in spending(transactions) if t.category == facts.category), key=lambda t: t.date,
                       reverse=True)[:TXN_LIMIT_DIAGNOSE]
         n = len(facts.monthly_totals)
         largest = facts.largest

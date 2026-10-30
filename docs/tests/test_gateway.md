@@ -198,3 +198,9 @@ The budget graph's `diagnose` step asks the LLM why one category is overspent. T
 **What it does:** A purchase with no merchant name appears as `"merchant": null` in both the merchants and the transactions.
 
 **Why it's there:** Plaid often has no merchant name. The diagnosis must still be built, not crash in the scrubber.
+
+## `test_diagnose_rows_leave_out_card_payments`
+
+**What it does:** A LOAN_PAYMENTS flag whose transactions include a $2,000 credit-card payment and a $400 student-loan payment. The prompt's transactions list only the student loan.
+
+**Why it's there:** The diagnose rows were filtered by category only, so a card payment that `overspend_facts` left out of "spent" was still quoted as evidence, and the rows didn't add up to the facts. The rows now go through the same `spending()` filter. The review on #12 found it.

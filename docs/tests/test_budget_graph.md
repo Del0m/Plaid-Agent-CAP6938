@@ -126,3 +126,15 @@ Run them from `backend/`:
 **What it does:** It is skipped unless Ollama is running with `OLLAMA_MODEL`. For each of the four planted users, it runs the real model on its run date and checks the cause. A recurring cause must lead to `adjust_next_budget`; every other cause must lead to something other than `adjust_next_budget` or `no_op`.
 
 **Why it's there:** It's the done-when: the local model gets the right cause from the computed facts for all three causes, plus the big one-off at a regular shop found in review. Checking the action as well catches a proposal the user shouldn't get, such as a higher budget after holiday shopping.
+
+## `test_model_unreachable_still_alerts`
+
+**What it does:** The model raises `ConnectionError` on both calls. The run still ends `ok`, with one alert written by code ("General merchandise is over its $… limit") and 2 LLM failures counted.
+
+**Why it's there:** Only a malformed reply used to fall back. An Ollama outage or timeout failed the whole run before `log_advice`, so every overspend was hidden that day, and every day the model stayed down. `invoke_structured` now treats an unreachable model like a bad reply. The review on #12 found it.
+
+## `test_no_budget_syncs_before_fitting`
+
+**What it does:** A user has an account but no stored transactions, and the sync stub adds July–September spending. The run ends `ok` and creates one budget period.
+
+**Why it's there:** `load_state` (which fits the first budget) ran before `sync`, and a user with no budget skipped straight to `persist_state`. So a user whose first webhook sync failed was never synced by the agent, and every run ended `no_budget`. Sync now runs first. The review on #12 found it.

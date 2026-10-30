@@ -119,3 +119,38 @@ def test_merchant_pattern():
     f = overspend_facts(flag(cat, 15500, 4200), None, period, history, OCT)
     assert {m.merchant: m.pattern for m in f.merchants} == {
         "FitClub Gym": "started_recently", "Barber": "regular", "Spa": "new"}
+
+
+# review on #12: with only September stored, a grocer seen in September is regular, not started_recently
+def test_short_history_merchant_is_regular():
+    cat = "FOOD_AND_DRINK"
+    period = [t(10, 5, 30000, cat, "Grocer")]
+    history = [t(9, d, 10000, cat, "Grocer") for d in (3, 10, 17)]
+    f = overspend_facts(flag(cat, 30000, 31500, reason="pace", pace=1.5), None, period, history, OCT)
+    assert merchant(f, "Grocer").pattern == "regular"
+    assert proposed_limit_cents(f) == -(-f.projected_cents // 500) * 500      # no new merchant: the projection
+
+
+# review on #12: a gym in 2 of the 3 history months is already in the limit's median, so it's added once
+def test_recurring_merchant_already_in_the_median_not_added_twice():
+    cat = "PERSONAL_CARE"
+    period = [t(10, 3, 9000, cat, "FitClub Gym"), t(10, 20, 4000, cat, "Barber")]
+    history = [t(m, 20, 4000, cat, "Barber") for m in (7, 8, 9)] + [t(m, 3, 9000, cat, "FitClub Gym") for m in (8, 9)]
+    f = overspend_facts(flag(cat, 13000, 13650), None, period, history, OCT)
+    assert merchant(f, "FitClub Gym").pattern == "started_recently"
+    assert proposed_limit_cents(f) == 13500      # the barber-only month ($42 with the 5%) plus one gym, up to $5
+
+
+# review on #12: a shop seen once in July and again in October didn't start recently; it's occasional
+def test_merchant_seen_long_ago_is_occasional():
+    period = [t(10, 12, 50000, merchant="Camera Shop")]
+    history = [t(7, 2, 50000, merchant="Camera Shop")] + [t(m, 4, 3500, merchant="Corner") for m in (7, 8, 9)]
+    f = overspend_facts(flag("GENERAL_MERCHANDISE", 50000, 3675), None, period, history, OCT)
+    assert merchant(f, "Camera Shop").pattern == "occasional"
+
+
+# review on #12: a fixed line's proposal is rounded up to $5 too
+def test_fixed_proposal_rounded_up():
+    rent = "RENT_AND_UTILITIES"
+    f = overspend_facts(flag(rent, 152337, 150000, kind="fixed"), None, [t(10, 1, 152337, rent)], [], OCT)
+    assert proposed_limit_cents(f) == 152500

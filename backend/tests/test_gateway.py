@@ -362,3 +362,22 @@ def test_audit_file_private_and_rotated(db, tmp_path, monkeypatch):
     assert path.stat().st_mode & 0o777 == 0o600
     assert [l["purpose"] for l in audit_lines(path)] == ["debts"]
     assert [l["purpose"] for l in audit_lines(path.with_name("a.jsonl.1"))] == ["accounts"]
+
+
+# review on #12: the diagnose rows go through the same spending filter as the facts, so a card payment that
+# isn't in "spent" isn't quoted as evidence either
+def test_diagnose_rows_leave_out_card_payments(db, tmp_path):
+    loans = "LOAN_PAYMENTS"
+    txns = [Txn(date=date(2026, 10, 5), amount_cents=200000, category=loans, merchant="Card Payment",
+                detailed="LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"),
+            Txn(date=date(2026, 10, 9), amount_cents=40000, category=loans, merchant="Student Loan",
+                detailed="LOAN_PAYMENTS_STUDENT_LOAN_PAYMENT")]
+    flag = PaceResult(category=loans, kind="fixed", limit_cents=30000, spent_cents=40000, days_elapsed=20,
+                      days_in_period=31, pace=None, flagged=True, reason="over_limit")
+    facts = overspend_facts(flag, None, txns, [], date(2026, 10, 1))
+    uid = seed_pii_user(db)
+    with db() as s:
+        rows = data(PrivacyGateway(s, uid, audit_path=tmp_path / "a.jsonl")
+                    .build_context("diagnose", facts=facts, transactions=txns))["transactions"]
+
+    assert [r["merchant"] for r in rows] == ["Student Loan"]
