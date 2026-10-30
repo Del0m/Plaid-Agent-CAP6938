@@ -85,12 +85,20 @@ The test file has these helpers:
 
 ## `test_unsynced_items_listed`
 
-**What it does:** Seeds three items: one for the dev user that was never synced (`txn_cursor` is `None`), one for the dev user that was synced, and a never-synced item belonging to another user. It expects `unsynced_items` to list only the dev user's never-synced item, with exactly `id` and `institution_name`.
+**What it does:** Seeds three items: one for the dev user that was never synced (`txn_cursor` is `None`), one for the dev user that was synced, and a never-synced item belonging to another user. It expects `unsynced_items` to list only the dev user's never-synced item, with `id`, `institution_name`, and `syncing: false`.
 
-**Why it's there:** When the first sync fails during linking, the page needs a way to retry. If only the browser remembered the failed sync, a refresh would lose it. The user would see "Connect a bank", link the same bank again, and end up with a duplicate item. Listing never-synced items from the database keeps Retry sync on screen across refreshes. `txn_cursor` is only written once a transactions sync finishes, which is why the endpoint uses it as the marker. The other user's item checks that this third query is scoped to the user too.
+**Why it's there:** Retry must survive refreshes and remain user-scoped. A missing cursor is one reason to list an item; `syncing` or `sync_failed` also lists it when a later full-sync step is incomplete. The partial-failure regression in `test_sync.py` covers that case.
 
 ---
 
-## Not covered
+## `test_debt_balance_uses_current_account_not_liability_snapshot`
 
-- **Account balance vs liability balance.** The totals use `accounts.current_balance_cents`, but each debt row shows `liabilities.balance_cents`, which is copied from the account when liabilities are refreshed. Both are written during the same `sync_item`, but if a balance refresh succeeds and the liability refresh then fails, the two can differ until the next sync. No test sets up that state.
+**What it does:** Seeds stale liability balances, including a liability whose account balance is unknown. It checks that debt rows use the current account balance (or null) and agree with the dashboard total.
+
+**Why it's there:** Webhooks update accounts without refreshing liabilities. Using the copied liability balance made the debt table contradict the total on the same page.
+
+## `test_account_groups_include_legacy_brokerage_and_sort_case_insensitively`
+
+**What it does:** Seeds a legacy brokerage asset, mixed-case names, a debt and an unknown type. It checks totals, case-insensitive ordering, and the API's asset/debt/other classification.
+
+**Why it's there:** The chart consumes the server's classification, so supported account types cannot silently drift between totals and chart bars.

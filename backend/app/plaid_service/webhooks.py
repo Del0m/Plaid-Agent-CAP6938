@@ -24,7 +24,8 @@ def sync_in_background(bind: Union[Engine, Connection], item_id: int) -> None:
             return
         try:
             sync_transactions(session, item)
-        except (PlaidError, httpx.HTTPError) as err:
+        except Exception as err:
+            session.rollback()
             logger.warning("webhook sync failed for item %s: %s", item_id, type(err).__name__)
 
 

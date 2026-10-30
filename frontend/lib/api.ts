@@ -6,6 +6,7 @@ export type Account = {
   name: string;
   mask: string | null;
   type: string;
+  group: "asset" | "debt" | "other";
   subtype: string | null;
   current_balance_cents: number | null;
   available_balance_cents: number | null;
@@ -31,10 +32,10 @@ export type Dashboard = {
   accounts: Account[];
   debts: Debt[];
   // linked items whose first sync never finished; each gets a Retry sync button
-  unsynced_items: { id: number; institution_name: string | null }[];
+  unsynced_items: { id: number; institution_name: string | null; syncing: boolean }[];
 };
 
-export type ExchangeResult = { item_id: number; synced: boolean };
+export type ExchangeResult = { item_id: number; synced: boolean; syncing: boolean };
 
 export class ApiError extends Error {
   status: number;

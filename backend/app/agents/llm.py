@@ -13,12 +13,15 @@ logger = logging.getLogger(__name__)
 # llama3.1 for mistral or a hosted model in benchmarks is a change to this file only
 
 
-def get_chat_model(temperature: Optional[float] = None, model: Optional[str] = None) -> BaseChatModel:
+def get_chat_model(temperature: Optional[float] = None, model: Optional[str] = None,
+                   num_ctx: Optional[int] = None) -> BaseChatModel:
     # config is read at call time so tests (and later, per-run eval settings) can change it
     return ChatOllama(
         model=model or config.OLLAMA_MODEL,
         base_url=config.OLLAMA_BASE_URL,
         temperature=config.LLM_TEMPERATURE if temperature is None else temperature,
+        num_ctx=config.LLM_NUM_CTX if num_ctx is None else num_ctx,
+        client_kwargs={"timeout": config.LLM_TIMEOUT_SECONDS},
     )
 
 
@@ -56,8 +59,11 @@ def _run_tool(by_name: dict, tc: dict) -> str:
         return f"error: unknown tool {name}"
     try:
         return str(t.invoke(tc["args"]))
-    except (ToolException, ValidationError) as exc:
+    except ToolException as exc:
         return f"error: {exc}"
+    except ValidationError:
+        # Validation may happen inside a tool using DB values, not just on model arguments.
+        return "error: tool validation failed; check the tool's argument schema"
     except Exception as exc:
         logger.warning("tool %s failed", name, exc_info=True)   # full detail stays in local logs
         return f"error: {name} failed ({type(exc).__name__})"
