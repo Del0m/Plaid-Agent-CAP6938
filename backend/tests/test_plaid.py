@@ -20,7 +20,11 @@ def fake_exchange(monkeypatch, item_id, *tokens):
 @pytest.fixture
 def synced(monkeypatch):
     calls = []
-    monkeypatch.setattr(plaid_api, "sync_item", lambda session, item: calls.append(item.plaid_item_id))
+    def succeed(session, item):
+        calls.append(item.plaid_item_id)
+        item.status = "active"
+        session.commit()
+    monkeypatch.setattr(plaid_api, "sync_item", succeed)
     return calls
 
 
@@ -75,7 +79,7 @@ def test_first_link_stores_item(client, db, monkeypatch, synced):
 
     assert resp.status_code == 200
     [item] = items(db)
-    assert resp.json() == {"item_id": item.id, "synced": True}
+    assert resp.json() == {"item_id": item.id, "synced": False, "syncing": True}
     assert item.plaid_item_id == "item-1"
     assert item.status == "active"
     # stored encrypted, never as the plaintext token
@@ -126,7 +130,7 @@ def test_exchange_syncs_new_item(client, db, monkeypatch, synced):
     resp = client.post("/plaid/exchange", json={"public_token": "public-1"})
 
     assert resp.status_code == 200
-    assert resp.json()["synced"] is True
+    assert resp.json()["syncing"] is True
     assert synced == ["item-1"]
 
 
@@ -159,7 +163,11 @@ def test_sync_failure_keeps_item_and_reports_unsynced(client, db, monkeypatch, e
 
     assert resp.status_code == 200
     [item] = items(db)
-    assert resp.json() == {"item_id": item.id, "synced": False}
+    assert resp.json() == {"item_id": item.id, "synced": False, "syncing": True}
+    assert item.status == "sync_failed"
+    assert client.get("/dashboard").json()["unsynced_items"] == [
+        {"id": item.id, "institution_name": None, "syncing": False},
+    ]
 
 
 # institution name from Link metadata is stored; a re-link without it keeps the old value
@@ -199,7 +207,27 @@ def test_sandbox_link_end_to_end(client, db):
     resp = client.post("/plaid/exchange", json={"public_token": plaid.sandbox_public_token()})
 
     assert resp.status_code == 200
-    assert resp.json()["synced"] is True
+    assert resp.json()["syncing"] is True
+    assert items(db)[0].status == "active"
     [item] = items(db)
     assert item.plaid_item_id
     assert decrypt(item.access_token_enc).startswith("access-sandbox-")
+
+
+def test_exchange_returns_before_background_sync_and_background_owns_session(client, db, monkeypatch, synced):
+    from fastapi import BackgroundTasks
+    queued = []
+    monkeypatch.setattr(BackgroundTasks, "add_task", lambda self, fn, *args, **kw: queued.append((fn, args)))
+    fake_exchange(monkeypatch, "item-1", "access-1")
+
+    response = client.post("/plaid/exchange", json={"public_token": "public-1"})
+
+    assert response.status_code == 200
+    assert synced == []
+    [item] = items(db)
+    assert item.status == "syncing"
+    assert client.get("/dashboard").json()["unsynced_items"][0]["syncing"] is True
+    [(work, args)] = queued
+    work(*args)  # the original request dependency has already closed its session
+    assert synced == ["item-1"]
+    assert items(db)[0].status == "active"

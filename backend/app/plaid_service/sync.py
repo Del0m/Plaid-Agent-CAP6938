@@ -1,4 +1,6 @@
 import logging
+import threading
+from functools import wraps
 from datetime import date as Date
 from typing import Optional
 from sqlalchemy import select
@@ -19,6 +21,27 @@ SYNC_PAGE_SIZE = 500
 MAX_SYNC_RESTARTS = 3
 # /liabilities/get errors that just mean "this bank has no debts for us", not a failure
 NO_LIABILITIES_CODES = {"PRODUCTS_NOT_SUPPORTED", "NO_LIABILITY_ACCOUNTS"}
+
+# One API worker: a webhook and full sync must not write the same item's pages concurrently.
+_locks: dict[tuple[int, int], threading.RLock] = {}
+_locks_guard = threading.Lock()
+
+
+def _serialized_item_sync(fn):
+    @wraps(fn)
+    def run(session: Session, item: PlaidItem):
+        key = (id(session.get_bind().engine), item.id)
+        with _locks_guard:
+            lock = _locks.setdefault(key, threading.RLock())
+        with lock:
+            # The session may have loaded the item before another sync advanced its cursor.
+            session.refresh(item)
+            try:
+                return fn(session, item)
+            except Exception:
+                session.rollback()
+                raise
+    return run
 
 
 # dollars (float) to integer cents; round, because int(12.29 * 100) == 1228
@@ -87,6 +110,7 @@ def _fetch_sync_pages(access_token: str, start_cursor: Optional[str]) -> dict:
 
 # loop /transactions/sync until has_more is false, upsert added/modified, mark removed, save cursor.
 # rows and cursor commit together, so a crash before the commit just replays the same pages next time.
+@_serialized_item_sync
 def sync_transactions(session: Session, item: PlaidItem) -> dict:
     pages = _fetch_sync_pages(decrypt(item.access_token_enc), item.txn_cursor)
     _upsert_accounts(session, item, list(pages["accounts"].values()))
@@ -202,10 +226,19 @@ def refresh_liabilities(session: Session, item: PlaidItem) -> list[Liability]:
 
 
 # everything for one item: transactions, then fresh balances, then liabilities
+@_serialized_item_sync
 def sync_item(session: Session, item: PlaidItem) -> dict:
-    txns = sync_transactions(session, item)
-    n_accounts = refresh_balances(session, item)
-    liabilities = refresh_liabilities(session, item)
+    try:
+        txns = sync_transactions(session, item)
+        n_accounts = refresh_balances(session, item)
+        liabilities = refresh_liabilities(session, item)
+    except Exception:
+        session.rollback()
+        item.status = "sync_failed"
+        session.commit()
+        raise
+    item.status = "active"
+    session.commit()
     return {
         "transactions": txns,
         "accounts": n_accounts,

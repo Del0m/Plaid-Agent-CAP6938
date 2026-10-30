@@ -13,7 +13,7 @@ Run them from `backend/`:
 ## Shared setup
 
 - `TABLE` is shaped like the IRS Roth comparison chart. It has a caption, a header cell with inline `<strong>&nbsp;</strong>` markup, `<p>` inside cells, and a cell holding a list of income limits.
-- `page(title, paragraphs, extra)` builds a page shaped like a government one: a `<nav>` menu (including `Contact Menu`) and a footer around one `<article>`. The article has headings, about 360 words of paragraphs, `TABLE`, and any `extra` HTML.
+- `page(title, paragraphs, extra)` builds a page shaped like a government one: a `<nav>` menu (including `Contact Menu`) and a footer around one `<article>`. The article has headings, about 360 words of paragraphs, `TABLE`, and any `extra` HTML. Each paragraph starts with its number ("Paragraph 0."), because trafilatura 2.3 drops repeated identical paragraphs, which left too few words and failed every fetch test.
 - `entry(slug, url, **extra)` is one `sources.json` entry (topic `saving`, license `public-domain` unless overridden). `make_kb` writes the entries to a temp `sources.json`.
 - `client(routes, seen)` is the mock HTTP client. `seen` collects every request so tests can check headers and whether anything was fetched at all.
 - `TODAY` is 2026-10-26.
@@ -97,3 +97,21 @@ Run them from `backend/`:
 **What it does:** Flattens a table with an empty `<thead>` and checks that the first data row is still a data row.
 
 **Why it's there:** The header has to be chosen before empty rows are filtered out. Otherwise a blank header row is skipped and the first real row becomes the column labels.
+
+## `test_short_header_keeps_every_cell`
+
+**What it does:** Flattens a table whose header has 3 cells (Filing status, Full, Partial) and whose data row has 5, and checks for the line `Single — Full: $146,000; Partial: $161,000; $7,000; $8,000`.
+
+**Why it's there:** A header that uses `colspan` has fewer cells than the data rows. `zip` stopped at the shorter list, so the last values (often the dollar limits) were dropped without a warning. Columns past the header are now kept without a label. The review on #8 found it.
+
+## `test_headerless_row_skips_empty_cells`
+
+**What it does:** Flattens a table with no header whose rows contain empty cells, and checks for `Age 50+ — $8,000` and `Under 50 — $7,000`.
+
+**Why it's there:** Without a header the empty cells were kept, which produced lines like `label — ; ; x`. Empty cells are now skipped whether or not there's a header.
+
+## `test_unexpected_error_reported_others_written`
+
+**What it does:** Lists an entry with no `topic` (a `KeyError` while building the front matter) before a good one. It expects `["broken"]` back and `good.md` written.
+
+**Why it's there:** `fetch_all` says it keeps going past failures, but it only caught `FetchError` and `httpx` errors. An extractor bug or a malformed `sources.json` entry stopped the whole run, so no later source was fetched. Any exception now counts as that source failing, and its type is logged.

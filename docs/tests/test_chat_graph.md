@@ -60,6 +60,12 @@ Run them from `backend/`:
 
 **Why it's there:** Any other exception's text can carry user data. SQLAlchemy errors print bound parameters, for example, and this path skips the privacy gateway. This is the TPC-12 rule, now enforced by the graph.
 
+## `test_validation_error_input_not_forwarded`
+
+**What it does:** The `strict` tool builds a pydantic model from a value that looks like database data ("Jane Doe's Checking") and fails validation. The test checks that the model gets an `error:` message that doesn't contain "Jane".
+
+**Why it's there:** A pydantic `ValidationError` prints `input_value=...`. When the error comes from a tool's own code building models from database rows, that value is user data, and `_run_tool` doesn't go through the privacy gateway. The review on #6 found that these errors were forwarded word for word. Now only a generic "check the tool's argument schema" message reaches the model. (This test started in `test_llm.py` on TPC-12 and moved here with the tool loop.)
+
 ## `test_model_error_propagates`
 
 **What it does:** Checks that a model call raising `ConnectionError` raises out of the graph.

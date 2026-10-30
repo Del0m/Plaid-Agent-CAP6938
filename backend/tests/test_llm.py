@@ -1,3 +1,5 @@
+import importlib
+
 from app import config
 from app.agents.llm import get_chat_model, get_embeddings
 
@@ -46,3 +48,27 @@ def test_get_embeddings_uses_config(monkeypatch):
     e = get_embeddings()
 
     assert (e.model, e.base_url) == ("e1", "http://h:1")
+
+
+# without a context size ollama silently cuts long prompts from the front; without a timeout a stuck model hangs
+def test_get_chat_model_sets_context_and_timeout(monkeypatch):
+    monkeypatch.setattr(config, "LLM_NUM_CTX", 4096)
+    monkeypatch.setattr(config, "LLM_TIMEOUT_SECONDS", 12.0)
+
+    m = get_chat_model()
+
+    assert m.num_ctx == 4096
+    assert m.client_kwargs == {"timeout": 12.0}
+
+
+# .env.example blanks optional settings; a blank number must mean "use the default", not crash at import
+def test_blank_numeric_env_vars_use_defaults(monkeypatch):
+    for name in ("LLM_TEMPERATURE", "LLM_NUM_CTX", "LLM_TIMEOUT_SECONDS"):
+        monkeypatch.setenv(name, "")
+    try:
+        importlib.reload(config)
+        assert config.LLM_TEMPERATURE == 0.0
+        assert config.LLM_NUM_CTX > 0 and config.LLM_TIMEOUT_SECONDS > 0
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)

@@ -73,3 +73,15 @@ Run them from `backend/`:
 **What it does:** Checks that a short file gives one chunk with id `<slug>-0`, that chunking the same file twice gives identical chunks, and that the citation fields are copied from the front matter.
 
 **Why it's there:** Stable ids make re-ingesting repeatable and let a result be traced back to its file. Copying the front matter onto each chunk is how a citation reaches the model.
+
+## `test_local_source_ids_dont_collide`
+
+**What it does:** Writes `foo.md` and `local/foo.md` and checks that their chunk ids are `foo-0` and `local-foo-0`.
+
+**Why it's there:** Ingest reads both `sources/*.md` and `sources/local/*.md`. After a license change in `sources.json` (or a hand copy), both can exist with the same stem. With ids built from the stem alone, Chroma refused the batch or quietly skipped one file's chunks, so that source was missing from `search_kb`. The review on #8 found it. Committed ids are unchanged.
+
+## `test_chunk_index_matches_id`
+
+**What it does:** Chunks a two-chunk-long document and checks that each chunk's `index` equals the number its id ends in.
+
+**Why it's there:** `chunk_index` is stored as metadata in Chroma, and it used to be the chunk's position across every source in the ingest. Chunk `cfpb-reduce-debt-0` could be stored with index 17. `index` is now set per document where the id is built.

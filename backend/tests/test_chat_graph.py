@@ -2,6 +2,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import ToolException, tool
 from langgraph.checkpoint.memory import MemorySaver
+from pydantic import BaseModel
 
 from app import config
 from app.agents.chat_graph import MAX_TOOL_ROUNDS, SYSTEM_PROMPT, build_chat_graph
@@ -27,7 +28,18 @@ def boom(name: str) -> int:
     raise RuntimeError("secret user data 4321")
 
 
-TOOLS = [get_lucky_number, bad, boom]
+class AccountRow(BaseModel):
+    balance: int
+
+
+@tool
+def strict(name: str) -> int:
+    """Builds a model from a database value, which can fail validation."""
+    AccountRow(balance="Jane Doe's Checking")
+    return 1
+
+
+TOOLS = [get_lucky_number, bad, boom, strict]
 CONFIG = {"configurable": {"thread_id": "t1"}}
 
 
@@ -93,6 +105,17 @@ def test_generic_exception_text_not_forwarded():
 
     assert model.seen[1][-1].content == "error: boom failed (RuntimeError)"
     assert not any("4321" in str(m.content) for call in model.seen for m in call)
+
+
+# a ValidationError raised inside a tool prints input_value, which can be user data from the db
+def test_validation_error_input_not_forwarded():
+    model = ScriptedChatModel(replies=[tool_call("strict", {"name": "x"}), AIMessage("ok")])
+
+    run(model)
+
+    sent = model.seen[1][-1].content
+    assert sent.startswith("error:")
+    assert "Jane" not in sent
 
 
 # ollama going away is not something to paper over with a fake answer
