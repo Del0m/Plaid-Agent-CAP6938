@@ -22,7 +22,7 @@ npm test -- lib/api.test.ts
 
 ## `streamChat decodes a character split across chunks`
 
-**What it does:** Splits the two UTF-8 bytes of `é` across two chunks, and checks that the token text is `café`.
+**What it does:** Splits the two UTF-8 bytes of `é` across two chunks, and checks that the token text is `café`. The wire ends with `done`, since a stream without one now throws.
 
 **Why it's there:** Decoding each chunk on its own turns a split character into `�`. Answers contain curly quotes and accented names, so the decoder has to run with `{stream: true}`.
 
@@ -37,6 +37,18 @@ npm test -- lib/api.test.ts
 **What it does:** Checks that a `500` response throws an `ApiError`.
 
 **Why it's there:** A failed request must reach the panel as an error, not as a silent empty answer.
+
+## `streamChat throws when the stream ends without done or error`
+
+**What it does:** Serves one token and then ends the body with no terminal event, and expects `streamChat` to reject with an error mentioning "ended".
+
+**Why it's there:** The server ends every turn with `done` or `error`. A body that just stops means the backend died or the proxy dropped the connection. `streamChat` used to resolve normally in that case, so the bubble kept its partial (often empty) text and no "Lost the connection" message ever showed. ChatPanel shows that message for any error that isn't an `ApiError`. The review on #9 found it. The HTTP error path and `request()` now share one `readBody` helper, so a fix to how error bodies are read can't miss one of them.
+
+## `streamChat an error event counts as the end`
+
+**What it does:** Serves only an `error` event and checks that it's delivered and `streamChat` resolves.
+
+**Why it's there:** `error` is a normal way for a turn to end (Ollama down, empty answer). It must not be reported a second time as a dropped connection.
 
 ## `streamChat posts thread_id and message as JSON to /api/chat`
 

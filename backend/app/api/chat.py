@@ -36,6 +36,7 @@ MESSAGES = {
     "empty": "The model returned an empty answer. Try rephrasing.",
     "other": "Something went wrong answering that. Try again.",
 }
+BUSY = "A reply is already in progress."
 
 # hooks the tests replace: where db sessions, checkpoints and the kb come from
 session_factory = SessionLocal
@@ -110,7 +111,10 @@ def _turn_events(user: User, req: ChatRequest):
                 if payload["retrieve"]["sources"]:
                     yield format_event("sources", {"sources": _sources(payload["retrieve"]["sources"])})
             elif "agent" in payload:
-                for tc in payload["agent"]["messages"][-1].tool_calls:
+                calls = payload["agent"]["messages"][-1].tool_calls
+                if calls:
+                    streamed = False   # text written next to a tool call isn't the answer (the client drops it)
+                for tc in calls:
                     tools_seen.append(tc["name"])
                     yield format_event("tool_call", {"id": tc["id"], "name": tc["name"], "args": tc["args"]})
             elif "tools" in payload:
@@ -140,9 +144,14 @@ def _turn_events(user: User, req: ChatRequest):
 
 
 # the response body: relays _turn_events from a worker thread, with keep-alives while it's quiet.
-# when the browser leaves, the worker is told to stop; it finishes the model call it's in, cleans
-# up and frees the user's lock on its own thread, so nothing here ever blocks the event loop
+# the user's lock is taken here, not in the endpoint: a browser that leaves before the body starts
+# never runs this, so nothing would free it. when the browser leaves mid-turn, the worker is told
+# to stop; it finishes the model call it's in, cleans up and frees the lock on its own thread
 async def _relay(user: User, req: ChatRequest, lock: threading.Lock):
+    if not lock.acquire(blocking=False):
+        # another request started between the endpoint's check and here
+        yield format_event("error", {"message": BUSY})
+        return
     loop, queue, stop = asyncio.get_running_loop(), asyncio.Queue(), threading.Event()
 
     def post(item):
@@ -183,8 +192,8 @@ async def _relay(user: User, req: ChatRequest, lock: threading.Lock):
 @router.post("/chat")
 def post_chat(req: ChatRequest, user: User = Depends(get_current_user)):
     lock = _user_lock(user.id)
-    if not lock.acquire(blocking=False):
-        return JSONResponse({"detail": "A reply is already in progress."}, status_code=409)
+    if lock.locked():
+        return JSONResponse({"detail": BUSY}, status_code=409)
     # an async body, so starlette's close on disconnect reaches _relay's finally and stops the turn
     return StreamingResponse(_relay(user, req, lock), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})

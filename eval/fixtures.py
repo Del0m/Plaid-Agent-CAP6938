@@ -11,7 +11,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.agents.tools import PFC_CATEGORIES
 from app.db.base import Base
+from app.db.models import Liability
 from tests.factories import add_account, add_txn, add_user
+
+# sqlite doesn't enforce the enum, so a typo like "credit card" would be stored as-is
+LIABILITY_KINDS = tuple(Liability.__table__.c.kind.type.enums)
 
 # scenario files -> validated dataclasses -> rows in a throwaway db (spec: tpc-16 scenario format).
 # every problem names the file and field, so a typo fails loudly instead of scoring a silent 0
@@ -86,16 +90,34 @@ def _strings(path: Path, exp: dict, key: str) -> list[str]:
     return value
 
 
+# every field seed() reads, so a typo fails the load (exit 2) instead of every run scoring a silent 0
+def _check_liability(path: Path, raw: dict, where: str) -> None:
+    if _require(path, raw, "kind", str, where) not in LIABILITY_KINDS:
+        _fail(path, where + "kind", f"{raw['kind']!r} is not one of {', '.join(LIABILITY_KINDS)}")
+    number = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+    if raw.get("apr") is not None and not number(raw["apr"]):
+        _fail(path, where + "apr", "must be a number or null")
+    if "min_payment" in raw and not number(raw["min_payment"]):
+        _fail(path, where + "min_payment", "must be a number")
+    if "due_in_days" in raw and (not isinstance(raw["due_in_days"], int) or isinstance(raw["due_in_days"], bool)
+                                 or raw["due_in_days"] < 0):
+        _fail(path, where + "due_in_days", "must be a whole number, 0 or more")
+
+
 def _check_user(path: Path, user: dict) -> None:
     accounts = _require(path, user, "accounts", list, "user.")
     names = set()
     for i, a in enumerate(accounts):
         where = f"user.accounts[{i}]."
-        names.add(_require(path, a, "name", str, where))
+        name = _require(path, a, "name", str, where)
+        # the name is the account's plaid_account_id in seed(), so two with one name can't both be stored
+        if name in names:
+            _fail(path, where + "name", f"{name!r} is used by another account")
+        names.add(name)
         _require(path, a, "type", str, where)
         _require(path, a, "balance", (int, float), where)
         if "liability" in a:
-            _require(path, _require(path, a, "liability", dict, where), "kind", str, where + "liability.")
+            _check_liability(path, _require(path, a, "liability", dict, where), where + "liability.")
     for i, t in enumerate(user.get("transactions", [])):
         where = f"user.transactions[{i}]."
         if _require(path, t, "account", str, where) not in names:

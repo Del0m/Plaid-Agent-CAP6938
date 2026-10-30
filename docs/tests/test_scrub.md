@@ -62,9 +62,22 @@ These are pure functions, so there are no fixtures or helpers.
 
 **Why it's there:** This is the account name the gateway's done-when test uses. Pinning it here means a scrub regression fails close to its cause, not only in the end-to-end gateway test.
 
+## `test_account_possessive_unusual_names`
+
+**What it does:** Parametrized over "James' Checking", "Mary-Jane's Savings", "O'Brien's Checking" and "THE JONES' JOINT". The whole label before the possessive becomes `[person]`.
+
+**Why it's there:** The word-based match missed a bare apostrophe after an s, and stopped at hyphens and at the apostrophe in O'Brien. "James' Checking" leaked whole, and "Mary-Jane's" kept "Mary-". The review on #6 reproduced all three. The rule now removes everything before the last possessive in an account label: account labels are the user's own text, so losing a bank word in front of the name costs little.
+
+## `test_p2p_whole_counterparty`
+
+**What it does:** Parametrized over "Zelle to Jane 1234 Doe", "Zelle to Jane jane@x.com Doe", "ZELLE JANE DOE" and "Venmo *JaneDoe". Everything after the service (and its to/from, if present) becomes `[person]`, and any scrubbed markers inside it are kept after it: "Zelle to [person] [number]", "ZELLE [person]", "Venmo *[person]".
+
+**Why it's there:** The old match stopped at the first scrubbed token, so the surname after an account number or email leaked. It also needed a literal "to" or "from", but bank exports often write "ZELLE JANE DOE" or "Venmo *JaneDoe". The review on #6 reproduced both leaks.
+
 ---
 
 ## Not covered
 
 - **Names that don't follow a pattern.** A merchant string like "Jane Doe Photography" or an account named "Mom" passes through unchanged. Regex can't recognize arbitrary names, which is why the gateway's allowlist, not this scrub, is the main defense.
 - **Non-US phone formats.** Out of scope for Sandbox data. Add cases if real data shows them.
+- **Merchants paid through PayPal.** "PAYPAL *SPOTIFY" becomes "PAYPAL *[person]", because the scrub can't tell a business from a person after a P2P service. That costs the model a merchant name; the alternative would leak names.

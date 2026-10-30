@@ -136,7 +136,7 @@ Run them from `backend/`:
 
 ## `test_run_error_status`
 
-**What it does:** When the model raises, the run reads `error` with `ConnectionError`, and the next run can start (the lock was released).
+**What it does:** When the run crashes (`evaluate` raises `RuntimeError`), the run reads `error` with `RuntimeError`, and the next run can start (the lock was released). Since the review on #12, an Ollama outage ends in code-written alerts instead of an error, so the crash comes from the engine.
 
 **Why it's there:** The page can say the run failed and why, and a failure doesn't lock the user out.
 

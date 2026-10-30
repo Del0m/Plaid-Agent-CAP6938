@@ -108,3 +108,21 @@ Run them from `backend/`:
 **What it does:** Lines given as [TRAVEL, FOOD] come back in that order, each with $0 spent. A paycheck produces no row.
 
 **Why it's there:** Callers match results to their stored lines by position, so the order must hold. Income is never spending, budgeted or not.
+
+## `test_fixed_bill_paid_early_not_over_limit`
+
+**What it does:** A $1,500 rent line with rent on Oct 1 and November's rent on Oct 31. On Oct 31, rent's spent is $1,500 and it isn't flagged.
+
+**Why it's there:** The raw month total was $3,000, so the line was flagged `over_limit`: a false alarm, which the false-alarm metric counts. The review on #15 found it. A fixed category's charge in the month's last 3 days, within 10% of the line's limit, now counts toward the next month.
+
+## `test_late_charge_unlike_the_bill_still_counts`
+
+**What it does:** Rent on Oct 1 plus a $90 charge on Oct 30. The $90 counts, so spent is $1,590 and the line is over its limit.
+
+**Why it's there:** Only a charge that looks like the bill moves. A late utility bill or fee is this month's, and over-limit spending must still be caught.
+
+## `test_flexible_late_spending_not_moved`
+
+**What it does:** A $300 grocery run on Oct 30 counts as October's on Oct 31.
+
+**Why it's there:** The early-bill rule is for fixed lines only. Moving flexible spending would hide real overspending at the end of a month.

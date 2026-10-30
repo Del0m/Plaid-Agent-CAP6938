@@ -1,5 +1,8 @@
 import json
+import os
+import re
 import secrets
+import threading
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Optional, Sequence
@@ -7,8 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .. import config
 from ..budget_engine.diagnose import OverspendFacts
-from ..budget_engine.txns import Txn, add_months
+from ..budget_engine.txns import Txn, add_months, spending
 from ..db.models import Account, Liability, Transaction
+from ..finance import avalanche_key
 from .scrub import scrub_account_name, scrub_merchant
 
 # the only code path that turns user data into LLM prompt text (architecture section 7).
@@ -30,6 +34,10 @@ ALERT_MEMORY_FIELDS = ("severity", "action", "status")
 ADVICE_MEMORY_FIELDS = ("month", "action", "outcome")
 TXN_LIMIT_DIAGNOSE = 20
 DEFAULT_SPENDING_DAYS = 30
+EXCLUDED_PRIMARY = frozenset({"INCOME", "TRANSFER_IN", "TRANSFER_OUT"})
+CARD_PAYMENT = "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"
+PSEUDONYM = re.compile(r"user_[0-9a-f]{4}")
+_audit_lock = threading.Lock()
 
 
 def _today() -> date:
@@ -51,6 +59,8 @@ class PrivacyGateway:
     # the session's pseudonym back in to keep it stable; omitted = start a new one
     def __init__(self, session: Session, user_id: str, audit_path: Optional[Path] = None,
                  pseudonym: Optional[str] = None):
+        if pseudonym is not None and not PSEUDONYM.fullmatch(pseudonym):
+            raise ValueError("pseudonym must match user_[0-9a-f]{4}")
         self._session = session
         self._user_id = user_id
         self._audit_path = audit_path or config.PROMPT_AUDIT_PATH
@@ -92,51 +102,63 @@ class PrivacyGateway:
 
     def _debts(self) -> list[dict]:
         rows = self._session.execute(
-            select(Liability, Account.name)
+            select(Liability, Account)
             .join(Account, Liability.account_id == Account.id)
             .where(Liability.user_id == self._user_id)
         ).all()
         debts = [{
-            "name": scrub_account_name(name), "kind": l.kind, "apr": l.apr, "balance": _dollars(l.balance_cents),
+            "name": scrub_account_name(a.name), "kind": l.kind, "apr": l.apr, "balance": _dollars(a.current_balance_cents),
             "min_payment": _dollars(l.min_payment_cents), "next_due_date": l.next_due_date,
-        } for l, name in rows]
+        } for l, a in rows]
         # same avalanche order as GET /dashboard (api/dashboard.py): highest APR first, unknown last
-        debts.sort(key=lambda d: (d["apr"] is None, -(d["apr"] or 0), -(d["balance"] or 0)))
+        debts.sort(key=lambda d: avalanche_key(d["apr"], d["balance"]))
         return debts
 
     # minimized per question: totals by category, plus one category's rows only when asked for
     def _spending(self, start: Optional[date], end: Optional[date], category: Optional[str]) -> dict:
         end = end or _today()
-        start = start or end - timedelta(days=DEFAULT_SPENDING_DAYS)
+        start = start or end - timedelta(days=DEFAULT_SPENDING_DAYS - 1)
+        if start > end:
+            raise ValueError("start date must be on or before end date")
+        category = category.strip().upper() if category else None
+        inflow = category in ("INCOME", "TRANSFER_IN")
         txns = self._session.scalars(
             select(Transaction)
             .where(Transaction.user_id == self._user_id, Transaction.removed.is_(False),
-                   Transaction.amount_cents > 0,          # positive = money out (sign convention)
+                   Transaction.amount_cents < 0 if inflow else Transaction.amount_cents > 0,
                    Transaction.date >= start, Transaction.date <= end)
             .order_by(Transaction.date.desc(), Transaction.id.desc())
         ).all()
 
+        # Aggregate spending excludes money moved between accounts and repayments of card purchases.
+        # Explicit income/transfer questions are supported separately, with their direction stated.
+        txns = [t for t in txns if t.pf_category_detailed != CARD_PAYMENT and (
+            t.pf_category_primary not in EXCLUDED_PRIMARY or t.pf_category_primary == category)]
+
         totals: dict[str, int] = {}
         for t in txns:
             key = t.pf_category_primary or "UNCATEGORIZED"
-            totals[key] = totals.get(key, 0) + t.amount_cents
+            totals[key] = totals.get(key, 0) + (-t.amount_cents if inflow else t.amount_cents)
 
         if category is None:
             return {k: _dollars(v) for k, v in sorted(totals.items(), key=lambda kv: -kv[1])}
         # plaid categories are upper-case enums; models often send them lower-case
-        category = category.upper()
-        rows = [t for t in txns if (t.pf_category_primary or "UNCATEGORIZED") == category][:TXN_LIMIT]
+        matching = [t for t in txns if (t.pf_category_primary or "UNCATEGORIZED") == category]
+        rows = matching[:TXN_LIMIT]
         return {
             "category": category,
             "total": _dollars(totals.get(category, 0)),   # an explicit $0, not "no data"
-            "transactions": [{"date": t.date, "amount": _dollars(t.amount_cents),
-                              "merchant": scrub_merchant(t.merchant_name)} for t in rows],
+            "direction": "inflow" if inflow else "outflow",
+            "count": len(matching), "truncated": len(matching) > TXN_LIMIT,
+            "transactions": [{"date": t.date, "amount": _dollars(-t.amount_cents if inflow else t.amount_cents),
+                              "merchant": None if inflow else scrub_merchant(t.merchant_name)} for t in rows],
         }
 
     # one flagged category only (architecture section 7: a dining diagnosis sees dining). built from the facts
     # the budget engine computed, field by field; merchants scrubbed, money in dollars
     def _diagnose(self, facts: OverspendFacts, transactions: list[Txn]) -> dict:
-        rows = sorted((t for t in transactions if t.category == facts.category), key=lambda t: t.date,
+        # the same spending filter as the facts: a card payment left out of "spent" isn't quoted as evidence
+        rows = sorted((t for t in spending(transactions) if t.category == facts.category), key=lambda t: t.date,
                       reverse=True)[:TXN_LIMIT_DIAGNOSE]
         n = len(facts.monthly_totals)
         largest = facts.largest
@@ -168,5 +190,22 @@ class PrivacyGateway:
             "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "pseudonym": self.pseudonym, "purpose": purpose, "params": params, "prompt": prompt,
         }
-        with self._audit_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(line, default=str, ensure_ascii=False) + "\n")
+        entry = (json.dumps(line, default=str, ensure_ascii=False) + "\n").encode("utf-8")
+        if len(entry) > config.PROMPT_AUDIT_MAX_BYTES:
+            raise ValueError("prompt exceeds the configured audit log size limit")
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW
+        with _audit_lock:
+            fd = os.open(self._audit_path, flags, 0o600)
+            try:
+                os.fchmod(fd, 0o600)
+                if os.fstat(fd).st_size + len(entry) > config.PROMPT_AUDIT_MAX_BYTES:
+                    os.close(fd)
+                    fd = None
+                    self._audit_path.replace(self._audit_path.with_name(self._audit_path.name + ".1"))
+                    fd = os.open(self._audit_path, flags, 0o600)
+                with os.fdopen(fd, "ab") as f:
+                    fd = None
+                    f.write(entry)
+            finally:
+                if fd is not None:
+                    os.close(fd)

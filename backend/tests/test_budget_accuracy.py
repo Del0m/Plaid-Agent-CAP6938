@@ -48,3 +48,36 @@ def test_occasional_mean_has_zero_actual_line():
     assert "GENERAL_MERCHANDISE" in r["mean"]["zero_actual_lines"]
     assert "GENERAL_MERCHANDISE" not in [ln["category"] for ln in r["median"]["lines"]]
     assert r["budget"]["skipped"] == ["GENERAL_MERCHANDISE"]
+
+
+# review on #11: the scored fits load the same history window initialize_budget uses
+def test_history_window_follows_history_months(monkeypatch):
+    from dataclasses import replace
+
+    import eval.budget_accuracy as acc
+    from app.budget_engine import fit
+    monkeypatch.setattr(fit, "HISTORY_MONTHS", 4)
+    earliest = []
+    real_fit = acc.fit_budget
+    monkeypatch.setattr(acc, "fit_budget", lambda txns, today, **kw: earliest.append(min(t.date for t in txns))
+                        or real_fit(txns, today, **kw))
+
+    run_profile(replace(profile("vacation"), today=date(2026, 9, 1)))
+
+    # a 4-month window on Sep 1 starts in May; a hardcoded 3 would start the history in June
+    assert {d.replace(day=1) for d in earliest} == {date(2026, 5, 1)}
+
+
+# review on #11: a profile initialize_budget can't fit (no complete month) is reported, not a crash
+def test_profile_without_a_budget_is_reported():
+    from dataclasses import replace
+    r = run_profile(replace(profile("steady"), today=date(2026, 5, 20)))
+    assert r["budget"] is None
+
+
+def test_run_with_an_unbudgeted_profile(tmp_path, capsys):
+    from dataclasses import replace
+    path = run([profile("steady"), replace(profile("vacation"), today=date(2026, 5, 20))], tmp_path,
+               date(2026, 10, 28))
+    assert json.loads(path.read_text())["pooled"]["median"] is not None
+    assert "no budget" in capsys.readouterr().out

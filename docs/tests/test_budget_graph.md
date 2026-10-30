@@ -203,3 +203,15 @@ SQLite gives the new run the same id, and it still pauses, with its alert pendin
 **What it does:** It is skipped unless Ollama is running with `OLLAMA_MODEL`. It runs the one-time planted user twice on Oct 20 with the real model. The first run writes one alert. The second chooses `no_op`, and there is still one alert.
 
 **Why it's there:** It's TPC-20's done-when, checked against the real local model, because deduplication is the model's decision from its memory facts.
+
+## `test_model_unreachable_still_alerts`
+
+**What it does:** The model raises `ConnectionError` on both calls. The run still ends `ok`, with one alert written by code ("General merchandise is over its $… limit") and 2 LLM failures counted.
+
+**Why it's there:** Only a malformed reply used to fall back. An Ollama outage or timeout failed the whole run before `log_advice`, so every overspend was hidden that day, and every day the model stayed down. `invoke_structured` now treats an unreachable model like a bad reply. The review on #12 found it.
+
+## `test_no_budget_syncs_before_fitting`
+
+**What it does:** A user has an account but no stored transactions, and the sync stub adds July–September spending. The run ends `ok` and creates one budget period.
+
+**Why it's there:** `load_state` (which fits the first budget) ran before `sync`, and a user with no budget skipped straight to `persist_state`. So a user whose first webhook sync failed was never synced by the agent, and every run ended `no_budget`. Sync now runs first. The review on #12 found it.

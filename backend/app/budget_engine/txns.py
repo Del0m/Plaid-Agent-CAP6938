@@ -1,5 +1,5 @@
 import calendar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Iterable, Optional
@@ -25,6 +25,24 @@ EXCLUDED_DETAILED = frozenset({"LOAN_PAYMENTS_CREDIT_CARD_PAYMENT"})
 
 def spending(txns: Iterable[Txn]) -> list[Txn]:
     return [t for t in txns if t.category not in EXCLUDED_PRIMARY and t.detailed not in EXCLUDED_DETAILED]
+
+
+# next month's rent paid a day or two early would put two bills in one month and none in the next. a fixed
+# category's charge in a month's last EARLY_DAYS days, within EARLY_TOLERANCE of the usual bill, is moved to the
+# 1st of the next month. bills maps a fixed category to its usual bill in cents (a line's limit, or fit's estimate)
+EARLY_DAYS = 3
+EARLY_TOLERANCE = Decimal("0.10")
+
+
+def shift_early_bills(txns: Iterable[Txn], bills: dict[str, int]) -> list[Txn]:
+    out = []
+    for t in txns:
+        bill = bills.get(t.category)
+        if (bill and t.amount_cents > 0 and t.date.day > month_end(t.date).day - EARLY_DAYS
+                and abs(t.amount_cents - bill) <= bill * EARLY_TOLERANCE):
+            t = replace(t, date=add_months(month_start(t.date), 1))
+        out.append(t)
+    return out
 
 
 def category_totals(txns: Iterable[Txn], start: date, end: date) -> dict[str, int]:

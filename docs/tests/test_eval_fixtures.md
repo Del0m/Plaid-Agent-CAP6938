@@ -127,6 +127,18 @@ Run them from `backend/`:
 
 **Why it's there:** Otherwise seeding fails inside every run, so each run is recorded as an error instead of the scenario being rejected once, up front.
 
+## `test_bad_liability_field_rejected`
+
+**What it does:** Parametrized over a string `apr`, a string `min_payment`, a fractional `due_in_days`, a negative `due_in_days` and the kind "credit card". Each scenario must be rejected with an error that names the field.
+
+**Why it's there:** `seed()` reads these fields, but only `kind` was checked. A typo loaded fine and then raised inside `run_once` (`TypeError` in `_cents`, or in `timedelta`), so every run of that scenario was scored as an error, which is the silent 0 this module is meant to prevent. SQLite doesn't enforce the `liability_kind` enum, so a bad kind would have been stored as-is. The allowed kinds come from the model's enum. The review on #10 found it.
+
+## `test_duplicate_account_name_rejected`
+
+**What it does:** Gives two accounts the name "Everyday Checking" and expects the scenario to be rejected on `name`.
+
+**Why it's there:** The account name is used as its `plaid_account_id` when seeding, so two accounts with one name raised `IntegrityError` inside every run instead of failing the load.
+
 ## `test_text_facts_not_in_question`
 
 **What it does:** For every committed scenario, no text fact appears in the scenario's own question.

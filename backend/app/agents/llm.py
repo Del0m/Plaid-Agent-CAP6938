@@ -20,7 +20,7 @@ def get_chat_model(temperature: Optional[float] = None, model: Optional[str] = N
         model=model or config.OLLAMA_MODEL,
         base_url=config.OLLAMA_BASE_URL,
         temperature=config.LLM_TEMPERATURE if temperature is None else temperature,
-        num_ctx=num_ctx or config.LLM_NUM_CTX,
+        num_ctx=config.LLM_NUM_CTX if num_ctx is None else num_ctx,
         num_predict=config.LLM_NUM_PREDICT,
         client_kwargs={"timeout": config.LLM_TIMEOUT_SECONDS},
     )
@@ -41,8 +41,11 @@ def _run_tool(by_name: dict, tc: dict) -> str:
         return f"error: unknown tool {name}"
     try:
         return str(t.invoke(tc["args"]))
-    except (ToolException, ValidationError) as exc:
+    except ToolException as exc:
         return f"error: {exc}"
+    except ValidationError:
+        # Validation may happen inside a tool using DB values, not just on model arguments.
+        return "error: tool validation failed; check the tool's argument schema"
     except Exception as exc:
         logger.warning("tool %s failed", name, exc_info=True)   # full detail stays in local logs
         return f"error: {name} failed ({type(exc).__name__})"

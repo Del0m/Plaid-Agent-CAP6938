@@ -73,11 +73,23 @@ export default function DashboardPage() {
     };
   }, [reloadKey]);
 
+  const syncing = data?.unsynced_items.some((item) => item.syncing) ?? false;
+  useEffect(() => {
+    if (!syncing) return;
+    // Bound automatic polling; a stopped API must still leave a visible Retry sync action.
+    const interval = setInterval(load, 2000);
+    const timeout = setTimeout(() => clearInterval(interval), 120_000);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [syncing, load]);
+
   const onLinked = useCallback(
     (r: ExchangeResult) => {
       setLinkError(null);
       setSyncError(null);
-      setLinkedNotice(r.synced);
+      setLinkedNotice(r.synced || r.syncing);
       load();
     },
     [load],
@@ -126,7 +138,7 @@ export default function DashboardPage() {
           role="status"
           className="flex items-center justify-between gap-2 rounded-lg border border-black/10 p-3 text-sm dark:border-white/15"
         >
-          <span>Account linked.</span>
+          <span>Account linked.{syncing ? " Syncing bank data…" : ""}</span>
           <button type="button" onClick={() => setLinkedNotice(false)} className="px-2 text-neutral-500" aria-label="Dismiss">
             ✕
           </button>
@@ -140,7 +152,9 @@ export default function DashboardPage() {
           className="flex flex-col gap-2 rounded-lg border border-amber-300 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
         >
           <span>
-            {item.institution_name ?? "A bank"} is linked, but loading its data failed.
+            {item.institution_name ?? "A bank"}{item.syncing
+              ? " is linked. Bank data is syncing…"
+              : " is linked, but loading its data failed."}
             {syncError?.itemId === item.id && (
               <span className="block text-red-600 dark:text-red-400">{syncError.message}</span>
             )}

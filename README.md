@@ -27,6 +27,8 @@ The browser only talks to the Next.js server. It forwards `/api/*` to FastAPI on
 
 To try it: open http://localhost:3000, click **Connect a bank**, pick **First Platypus Bank**, and log in with `user_good` / `pass_good`.
 
+Linking returns immediately after saving the bank connection; its first full sync runs in the background. The dashboard polls while it is syncing and keeps **Retry sync** available if any step fails, including balances or liabilities. Run one API worker: per-item sync locks serialize webhook, initial and manual syncs within that process.
+
 ## Knowledge base
 
 The chat agent's `search_kb` tool reads public financial guidance from a local Chroma store. One-time setup, from `backend/`:
@@ -66,6 +68,8 @@ DEV_USER_EMAIL=overspend-recurring@eval.local ../venv/bin/uvicorn app.main:app
 Then start the web app. On `/alerts`, run a budget check for **2026-10-20**, accept the $135 proposal, and run again: the agent remembers and doesn't alert twice. Other planted users are `overspend-one-time`, `overspend-seasonal` and `overspend-known-merchant`. The same run works from the terminal with `../venv/bin/python -m app.agents.budget_graph --user budget-overspend-recurring --date 2026-10-20 --no-sync`.
 
 ## Demo on a phone
+
+Use **Plaid Sandbox data only** for this demo. The app has one unauthenticated dev user: anyone who can reach the LAN address or tunnel can read the dashboard and call its API. Use a trusted network, do not share the tunnel URL publicly, and stop the server/tunnel when the demo ends. Real accounts require authentication and webhook verification first.
 
 1. Build and serve the web app on every network interface:
    ```bash

@@ -33,13 +33,16 @@ class RunRecord:
 def run_once(scenario: Scenario, *, model, kb, audit_path: Path, run: int = 1,
              today: Optional[date] = None) -> RunRecord:
     rec = RunRecord(scenario_id=scenario.id, run=run)
-    start = time.perf_counter()
+    start = None
     try:
         with temp_db() as Session, Session() as session:
             user_id = seed(session, scenario, today or date.today())
             tools = make_tools(PrivacyGateway(session, user_id, audit_path=audit_path), kb)
             graph = build_chat_graph(tools, retrieve=kb.search, model=model)
+            # timed from here: the answer, not the throwaway database and seeding around it
+            start = time.perf_counter()
             state = graph.invoke({"messages": [HumanMessage(scenario.question)], "tool_rounds": 0})
+            rec.latency_s = time.perf_counter() - start
         messages = state["messages"]
         for m in messages:
             if isinstance(m, AIMessage):
@@ -52,5 +55,6 @@ def run_once(scenario: Scenario, *, model, kb, audit_path: Path, run: int = 1,
     except Exception as exc:
         rec.error = f"{type(exc).__name__}: {exc}"
         rec.tool_calls, rec.tool_results, rec.sources, rec.answer = [], [], [], ""
-    rec.latency_s = time.perf_counter() - start
+        # a run that failed during setup never started answering
+        rec.latency_s = time.perf_counter() - start if start is not None else 0.0
     return rec

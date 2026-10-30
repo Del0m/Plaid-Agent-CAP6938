@@ -248,11 +248,18 @@ def test_run_409_while_locked(api):
         lock.release()
 
 
+# an ollama outage ends in fallback alerts since the review on #12, so the crash comes from the engine
 def test_run_error_status(api):
+    from app.agents import budget_graph
+
+    def boom(*a, **k):
+        raise RuntimeError("bug")
+
     api.seed("overspend-one-time")
-    api.models.append(ScriptedChatModel(replies=[ConnectionError("down")]))
+    api.mp.setattr(budget_graph, "evaluate", boom)
+    api.models.append(ScriptedChatModel(replies=[]))
     body = wait(api, start(api))
-    assert (body["status"], body["error"]) == ("error", "ConnectionError")
+    assert (body["status"], body["error"]) == ("error", "RuntimeError")
     assert api.client.post("/budget/run", json={"date": "2026-10-20"}).status_code == 202   # lock released
 
 

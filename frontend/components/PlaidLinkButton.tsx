@@ -15,6 +15,7 @@ export default function PlaidLinkButton({ label, onLinked, onError }: Props) {
   const [token, setToken] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [exchanging, setExchanging] = useState(false);
+  const [generation, setGeneration] = useState(0);
   // one exchange per link, even if plaid calls back twice
   const inFlight = useRef(false);
 
@@ -26,7 +27,7 @@ export default function PlaidLinkButton({ label, onLinked, onError }: Props) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [generation]);
 
   const onSuccess = useCallback<PlaidLinkOnSuccess>(
     async (publicToken, metadata) => {
@@ -44,6 +45,8 @@ export default function PlaidLinkButton({ label, onLinked, onError }: Props) {
       } finally {
         inFlight.current = false;
         setExchanging(false);
+        setToken(null);
+        setGeneration((value) => value + 1);
       }
     },
     [onLinked, onError],
@@ -53,6 +56,10 @@ export default function PlaidLinkButton({ label, onLinked, onError }: Props) {
   const onExit = useCallback<PlaidLinkOnExit>(
     (err) => {
       if (err) onError(err.display_message ?? err.error_message);
+      if (!inFlight.current) {
+        setToken(null);
+        setGeneration((value) => value + 1);
+      }
     },
     [onError],
   );
@@ -70,7 +77,7 @@ export default function PlaidLinkButton({ label, onLinked, onError }: Props) {
     <button
       type="button"
       onClick={() => open()}
-      disabled={!ready || exchanging}
+      disabled={!token || !ready || exchanging}
       className="w-full rounded-md bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 sm:w-auto dark:bg-white dark:text-neutral-900"
     >
       {exchanging ? "Linking…" : token ? label : "Loading…"}

@@ -49,11 +49,17 @@ Run them from `backend/`:
 
 **Why it's there:** An empty message or evidence would put a blank alert in front of the user.
 
-## `test_model_error_propagates`
+## `test_unreachable_model_returns_none`
 
-**What it does:** A connection error from the model is raised, not retried or turned into `None`.
+**What it does:** A connection error from the model returns `None` at once, and the valid reply queued after it is never asked for.
 
-**Why it's there:** Ollama being down isn't a bad answer. The run should fail and be marked `error`, and the next daily run retries.
+**Why it's there:** The run used to fail on an unreachable model, which hid every overspend until Ollama came back (review on #12). `None` makes the graph write its code-written alert. There's no retry, because a model that's down won't answer a second call either. The errors that count as unreachable are httpx errors, `ConnectionError`, `TimeoutError` and Ollama's `ResponseError`.
+
+## `test_other_model_error_propagates`
+
+**What it does:** A `KeyError` raised by the model call still propagates.
+
+**Why it's there:** Only an unreachable model falls back. Anything else is a bug, and catching it would hide it behind a fallback alert, the way a broad catch briefly hid a test fake running out of replies.
 
 ## `test_action_schema`
 

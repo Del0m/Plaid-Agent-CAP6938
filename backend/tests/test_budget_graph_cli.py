@@ -35,12 +35,19 @@ def test_cli_prints_report(db, capsys):
         assert text in out, text
 
 
-def test_cli_error_exit(db, capsys):
+# a model outage now ends in fallback alerts (test_model_unreachable_still_alerts), so a crash comes from elsewhere
+def test_cli_error_exit(db, capsys, monkeypatch):
+    from app.agents import budget_graph
+
+    def boom(*a, **k):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(budget_graph, "evaluate", boom)
     uid = seeded(db)
     code = main(["--user", uid, "--date", "2026-10-20", "--no-sync"], session_factory=db,
-                model=ScriptedChatModel(replies=[ConnectionError("down")]))
+                model=ScriptedChatModel(replies=[]))
     assert code == 1
-    assert "ConnectionError" in capsys.readouterr().out
+    assert "RuntimeError" in capsys.readouterr().out
 
 
 def test_cli_bad_date(db):

@@ -17,6 +17,7 @@ from app.agents.budget_llm import Action, Diagnosis, decide_messages, diagnose_m
 from app import config
 from app.agents.llm import get_chat_model
 from app.budget_engine.diagnose import overspend_facts, proposed_limit_cents
+from app.budget_engine.fit import HISTORY_MONTHS
 from app.budget_engine.pace import BudgetLine as EngineLine, PaceResult, evaluate
 from app.budget_engine.txns import add_months
 from app.budget_service.initialize import initialize_budget, load_txns
@@ -162,7 +163,7 @@ def build_budget_graph(session_factory, *, model: Optional[BaseChatModel], gatew
         facts, contexts, diagnoses, failures = {}, {}, {}, state.get("llm_failures", 0)
         with session_factory() as s:
             period, txns = period_txns(s, state)
-            history = load_txns(s, state["user_id"], add_months(period.start_date, -3),
+            history = load_txns(s, state["user_id"], add_months(period.start_date, -HISTORY_MONTHS),
                                 period.start_date - timedelta(days=1))
             fits = {ln.category: ln.fit_json for ln in period.lines}
             memory = {f["category"]: (_this_month_alerts(s, state["user_id"], period.id, f["category"]),
@@ -254,7 +255,7 @@ def build_budget_graph(session_factory, *, model: Optional[BaseChatModel], gatew
         return {"status": status}
 
     def after_load(state: BudgetState) -> str:
-        return "persist_state" if state.get("status") in ("no_budget", "period_ended") else "sync"
+        return "persist_state" if state.get("status") in ("no_budget", "period_ended") else "categorize"
 
     def after_detect(state: BudgetState) -> str:
         return "diagnose" if state["flags"] else "persist_state"
@@ -269,9 +270,10 @@ def build_budget_graph(session_factory, *, model: Optional[BaseChatModel], gatew
                      ("diagnose", diagnose), ("decide_action", decide_action), ("log_advice", log_advice),
                      ("await_approval", await_approval), ("persist_state", persist_state)):
         graph.add_node(name, fn)
-    graph.add_edge(START, "load_state")
-    graph.add_conditional_edges("load_state", after_load, ["sync", "persist_state"])
-    graph.add_edge("sync", "categorize")
+    # sync first: a user with no budget yet gets it fit on fresh data, not on whatever was stored before
+    graph.add_edge(START, "sync")
+    graph.add_edge("sync", "load_state")
+    graph.add_conditional_edges("load_state", after_load, ["categorize", "persist_state"])
     graph.add_edge("categorize", "update_totals")
     graph.add_edge("update_totals", "detect_overspend")
     graph.add_conditional_edges("detect_overspend", after_detect, ["diagnose", "persist_state"])

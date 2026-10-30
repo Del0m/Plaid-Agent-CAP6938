@@ -78,12 +78,36 @@ Run them from `backend/`:
 
 ## `test_recurring_proposal_adds_new_merchants_typical`
 
-**What it does:** For the gym user (a $42 limit; a $90 gym that started last month), the proposal is $135: the old limit plus the gym's typical month, rounded up to $5.
+**What it does:** For the gym user (a $42 limit; a $90 gym that started last month), the proposal is $135: the category without the gym ($42), plus the gym's typical month, rounded up to $5.
 
 **Why it's there:** It was found in the TPC-19 review. A straight-line projection proposed $205 for what is a steady $130 a month, because both charges had already posted by day 20. The proposal is what close applies if the user accepts it.
 
 ## `test_merchant_pattern`
 
-**What it does:** Merchants are labelled `started_recently` (the gym, seen in 1 of the last 3 months), `regular` (the barber, seen in all 3) or `new` (a spa, never seen).
+**What it does:** Merchants are labelled `started_recently` (the gym, seen in the latest of the 3 history months), `regular` (the barber, seen in all 3) or `new` (a spa, never seen).
 
 **Why it's there:** In a live run, the model read "months_seen_before: 1" as "seen for the first time" and called the gym `one_time`. Naming the pattern in code removes that reading error, and the model still decides the cause.
+
+## `test_short_history_merchant_is_regular`
+
+**What it does:** History holds only September. A grocer seen in September is `regular`, and since no merchant started recently, a recurring proposal is the projection rounded up to $5.
+
+**Why it's there:** The pattern used to assume three months of history. For a user who linked in September, every merchant had 1 prior month and was labelled `started_recently`. The prompt's first rule then pushed the cause to recurring, and the proposal added every merchant's typical month on top of a limit already fit from them, about twice the category's real spend. Patterns are now judged over the history months the user has data for. The review on #12 found it.
+
+## `test_recurring_merchant_already_in_the_median_not_added_twice`
+
+**What it does:** A $90 gym appears in August and September, and a $40 barber in all three months, so the limit is $136.50 (the $130 median × 1.05). The gym is `started_recently`, and the proposal is $135: the barber-only baseline ($42) plus one gym, rounded up to $5.
+
+**Why it's there:** The old rule added the gym's month to the old limit, but the $130 median already held the gym, so it proposed $227. The proposal now starts from the lower of the old limit and the category's median without the new merchants. The review on #12 found it.
+
+## `test_merchant_seen_long_ago_is_occasional`
+
+**What it does:** A camera shop seen in July, but not in August or September, is `occasional` when it shows up again in October.
+
+**Why it's there:** It used to count as `started_recently` (seen in 1 of 3 months), which the prompt reads as "began charging since the budget was set and now charges every month". A $500 one-off at a shop visited once months ago was then called recurring, and next month's limit went up by $500. `occasional` is treated like `new` by the prompt's one-time rule. The review on #12 found it.
+
+## `test_fixed_proposal_rounded_up`
+
+**What it does:** A fixed line that spent $1,523.37 proposes $1,525.
+
+**Why it's there:** The comment said every proposal is rounded up to $5, but a fixed line's proposal was the raw amount. The review on #12 found it. Next month's bill paid early no longer counts toward this month (TPC-17's early-bill rule in pace), so it can't double a fixed proposal either.
