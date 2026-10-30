@@ -11,7 +11,7 @@ These tests cover `app/privacy/gateway.py`, the only code path that turns user d
 The `db` fixture from `conftest.py` provides a fresh in-memory database (see [`test_plaid.md`](test_plaid.md#shared-setup-backendtestsconftestpy)). Every test passes its own `audit_path` under pytest's `tmp_path`, so nothing is written to `backend/logs/`.
 
 - `fixed_today` (autouse) pins `gateway._today()` to 2026-10-21, so the default 30-day spending window is the same on every run.
-- `add_user`, `add_account` and `add_txn` write rows straight to the database. `add_account` can attach a liability.
+- `add_user`, `add_account` and `add_txn` write rows straight to the database. `add_account` can attach a liability. `add_txn` takes an optional `detailed` category, which the card-payment test needs.
 - `seed_pii_user(db)` creates the spec's "Jane Doe" with PII in every place it could leak from:
   - email `jane.doe@example.com`;
   - item id `item-secret-1`;
@@ -65,7 +65,7 @@ The `db` fixture from `conftest.py` provides a fresh in-memory database (see [`t
 
 **What it does:** Adds cards with APRs of 15, 24.99 and unknown, and expects the order 24.99, 15, unknown.
 
-**Why it's there:** The M2 done-when question is "which debt first?". If the model sees debts in the same avalanche order as the dashboard, the answer and the page agree, and a small model doesn't have to sort the list itself.
+**Why it's there:** The sort key is `finance.avalanche_key`, shared with GET /dashboard so the two can't drift apart. The M2 done-when question is "which debt first?". If the model sees debts in the same avalanche order as the dashboard, the answer and the page agree, and a small model doesn't have to sort the list itself.
 
 ## `test_spending_totals_positive_only_in_range`
 
@@ -82,21 +82,21 @@ Getting any of them wrong would give the model a wrong total to reason about.
 
 ## `test_spending_category_lists_capped_newest_first`
 
-**What it does:** Adds 60 FOOD_AND_DRINK transactions and one TRANSFER_OUT, then asks for FOOD_AND_DRINK. It expects 50 rows, the first dated today, and no TRANSFER_OUT anywhere.
+**What it does:** Adds 60 FOOD_AND_DRINK transactions and one TRANSFER_OUT, then asks for FOOD_AND_DRINK. It expects 50 rows, the first dated today, `count: 60` with `truncated: true`, and no TRANSFER_OUT anywhere.
 
-**Why it's there:** This is "minimize per purpose" (section 7, step 2): a question about dining gets dining rows only. The cap keeps the prompt small, which matters for an 8B model's accuracy and speed.
+**Why it's there:** This is "minimize per purpose" (section 7, step 2): a question about dining gets dining rows only. The cap keeps the prompt small, which matters for an 8B model's accuracy and speed. `count` and `truncated` were added after the review on #6: without them, 50 listed rows next to a total covering 80 quietly disagree, and a model that sums the rows or counts visits gets it wrong.
 
 ## `test_spending_category_case_insensitive_and_zero`
 
-**What it does:** With one FOOD_AND_DRINK purchase, asking for `food_and_drink` returns FOOD_AND_DRINK with its $6.50 total, and asking for TRAVEL returns `{"category": "TRAVEL", "total": 0.0, "transactions": []}`.
+**What it does:** With one FOOD_AND_DRINK purchase, asking for `food_and_drink` returns FOOD_AND_DRINK with its $6.50 total, and asking for TRAVEL returns `{"category": "TRAVEL", "total": 0.0, "direction": "outflow", "count": 0, "truncated": false, "transactions": []}`.
 
 **Why it's there:** Plaid categories are upper-case enums, but models often send them in lowercase. Before this fix, both a lowercase name and a category with no spending returned `{}`, which the model can't tell apart from "no data". It would then tell the user they spent nothing on dining. Now the category is normalized and zero is stated explicitly.
 
 ## `test_spending_defaults_to_last_30_days`
 
-**What it does:** With today pinned to 2026-10-21, a transaction on 2026-09-21 is included and one on 2026-09-20 is not.
+**What it does:** With today pinned to 2026-10-21, a transaction on 2026-09-22 is included and one on 2026-09-21 is not.
 
-**Why it's there:** The tools in TPC-13 will often ask for spending without dates. This test pins the default window and its edge.
+**Why it's there:** The tools in TPC-13 will often ask for spending without dates. This test pins the default window and its edge. The window is 30 calendar days including today. It used to start 30 days *before* today, which with both ends inclusive was 31 days, so a total the model calls "30-day spending" included an extra day. The review on #6 found it, and this test had locked the off-by-one in.
 
 ## `test_empty_user_builds_empty_context`
 
@@ -122,9 +122,45 @@ Getting any of them wrong would give the model a wrong total to reason about.
 
 **Why it's there:** Each purpose has its own reviewed allowlist. A typo or a new purpose must fail loudly instead of falling through to some default that sends more than intended.
 
+## `test_spending_leaves_out_transfers_and_card_payments`
+
+**What it does:** Adds a $5 dining purchase, a $5 credit-card payment (`LOAN_PAYMENTS_CREDIT_CARD_PAYMENT`), a $9 student-loan payment, a $100 TRANSFER_OUT and $2,500 of INCOME. The default totals are `{"LOAN_PAYMENTS": 9.0, "FOOD_AND_DRINK": 5.0}`.
+
+**Why it's there:** A card payment pays for purchases already counted, and a transfer moves money between the user's own accounts. Counting either doubles spending: spend $500 on a card, pay it off from checking, and the model reports $1,000. These are the same exclusions as the budget engine's `spending()` (TPC-17). A loan payment that isn't a card payment is real money out, so it stays. The review on #6 found this.
+
+## `test_spending_income_question_reports_inflow`
+
+**What it does:** Adds $2,500 of payroll income (stored as -250000, money in) and asks for INCOME. It expects a total of 2500.0, `direction: "inflow"`, one row with a positive amount, and `merchant: null`.
+
+**Why it's there:** The `get_spending` tool offers INCOME and TRANSFER_IN, but the old query only read positive (money-out) rows, so asking "how much did I earn?" always got $0. An inflow question now reads negative rows and reports them as positive, with `direction` saying which way the money moved. The payer is dropped because a payroll or transfer label is often a person's or employer's name, and the amount and date answer the question.
+
+## `test_spending_reversed_range_raises`
+
+**What it does:** Asks for spending from 2026-11-01 to 2026-10-21 and expects a `ValueError`.
+
+**Why it's there:** A reversed range used to return `{}`, which the model reads as "no spending". Raising lets the tool layer tell the model its dates are backwards.
+
+## `test_bad_pseudonym_rejected`
+
+**What it does:** Passes `pseudonym="u-jane"` (a user id, not a pseudonym) and expects a `ValueError`.
+
+**Why it's there:** The pseudonym is written into every prompt and audit line as the "user". Only the gateway's own `user_xxxx` format is accepted, so a user id, or prompt text, can't be passed back in where a pseudonym belongs.
+
+## `test_debt_balance_from_account`
+
+**What it does:** Stores a card whose liability row has a $410 balance, then updates the account's balance to $450, as a later balance refresh would. The debts context reports 450.0.
+
+**Why it's there:** `liabilities.balance_cents` is a copy taken when liabilities were last refreshed, while the account balance is refreshed on every sync. The dashboard now reads the account balance, so the agent does too, and the two always quote the same number.
+
+## `test_audit_file_private_and_rotated`
+
+**What it does:** Writes one audit line, lowers `PROMPT_AUDIT_MAX_BYTES` to just above the file's size, and writes a second. It checks that the file's mode is `0600`, that the current file holds only the second line, and that `a.jsonl.1` holds the first.
+
+**Why it's there:** The audit log holds the exact text of every prompt, so it's created owner-only and opened with `O_NOFOLLOW` (a symlink planted at its path can't redirect the writes). It used to grow forever. It now rotates to a single `.1` backup once the next line would pass the limit (8 MB by default).
+
 ---
 
 ## Not covered
 
 - **PII the scrub doesn't recognize** in an account or merchant name, such as "Mom" or "Jane Doe Photography". See `test_scrub.md`. The allowlist limits this to those two fields.
-- **Concurrent writes to the audit log.** Appends happen one call at a time. Chat sessions running in parallel (TPC-15) could interleave writes; JSONL lines this short are effectively atomic on macOS, but nothing tests that.
+- **Concurrent writes to the audit log.** Writes in one process are serialized by a lock, which also covers rotation. Two processes (the API and a CLI script) writing at once aren't, and nothing tests that.
