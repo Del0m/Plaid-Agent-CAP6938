@@ -11,7 +11,7 @@ These tests cover `app/privacy/gateway.py`, the only code path that turns user d
 The `db` fixture from `conftest.py` provides a fresh in-memory database (see [`test_plaid.md`](test_plaid.md#shared-setup-backendtestsconftestpy)). Every test passes its own `audit_path` under pytest's `tmp_path`, so nothing is written to `backend/logs/`.
 
 - `fixed_today` (autouse) pins `gateway._today()` to 2026-10-21, so the default 30-day spending window is the same on every run.
-- `add_user`, `add_account` and `add_txn` write rows straight to the database. `add_account` can attach a liability. `add_txn` takes an optional `detailed` category, which the card-payment test needs.
+- `add_user`, `add_account` and `add_txn` (in `tests/factories.py`, shared with `test_tools.py`) write rows straight to the database. `add_account` can attach a liability. `add_txn` takes an optional `detailed` category, which the card-payment test needs.
 - `seed_pii_user(db)` creates the spec's "Jane Doe" with PII in every place it could leak from:
   - email `jane.doe@example.com`;
   - item id `item-secret-1`;
