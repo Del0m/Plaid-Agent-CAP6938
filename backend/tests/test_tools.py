@@ -172,6 +172,12 @@ def test_every_call_is_audited(tools, tmp_path):
     assert [l["purpose"] for l in lines] == ["accounts", "debts", "spending"]
 
 
+# review on #9: the system prompt says never write URLs; the tool description must not say the opposite
+def test_search_kb_description_does_not_ask_for_urls(tools):
+    description = tools["search_kb"].description.lower()
+
+    assert "cite" not in description and "url" not in description
+
 def test_search_kb_output_shape(tools, kb):
     out = tools["search_kb"].invoke({"query": "which debt should I pay first"})
 

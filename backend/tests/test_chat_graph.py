@@ -218,7 +218,33 @@ def test_sources_by_turn_keyed_by_question_id():
 
     values = graph.get_state(CONFIG).values
     questions = [m for m in values["messages"] if isinstance(m, HumanMessage)]
-    assert values["sources_by_turn"] == {questions[0].id: [GUIDE], questions[1].id: [other]}
+    slim = lambda g: [{k: g[k] for k in ("title", "section", "source_url")}]
+    assert values["sources_by_turn"] == {questions[0].id: slim(GUIDE), questions[1].id: slim(other)}
+
+
+# review on #9: the reset belongs to the graph, so a caller that doesn't pass tool_rounds still gets tools
+def test_tool_rounds_reset_without_the_caller():
+    saver = MemorySaver()
+    calls = [tool_call("get_lucky_number", {"name": "A"}, id=f"c{i}") for i in range(MAX_TOOL_ROUNDS)]
+    model = ScriptedChatModel(replies=calls + [AIMessage("turn one"), AIMessage("turn two")])
+    graph = run(model, saver=saver)
+
+    graph.invoke({"messages": [HumanMessage("again")]}, CONFIG)
+
+    assert model.tools_seen[-1] is not None
+
+
+# review on #9: a turn cut off mid-tool leaves calls with no results; the model must never see them unanswered
+def test_dangling_tool_calls_answered_before_the_model_sees_them():
+    model = ScriptedChatModel(replies=[AIMessage("answer")])
+    cut_off = tool_call("get_lucky_number", {"name": "Ada"}, id="lost")
+
+    run(model, question="second question", messages=[HumanMessage("first"), cut_off, HumanMessage("second question")])
+
+    sent = model.seen[0]
+    i = next(n for n, m in enumerate(sent) if getattr(m, "tool_calls", None))
+    assert isinstance(sent[i + 1], ToolMessage) and sent[i + 1].tool_call_id == "lost"
+    assert sent[i + 1].content.startswith("error:")
 
 
 # a real tool call on the local model, end to end through the graph

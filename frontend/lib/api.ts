@@ -62,19 +62,22 @@ export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// read as text first: a proxy error page is html, and res.json() would throw a SyntaxError
+async function readBody(res: Response): Promise<unknown> {
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return text; // not json; keep the raw text as the detail
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
-  // read as text first: a proxy error page is html, and res.json() would throw a SyntaxError
-  const text = await res.text();
-  let body: unknown = text;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    // not json; keep the raw text as the detail
-  }
+  const body = await readBody(res);
   if (!res.ok) throw new ApiError(res.status, body);
   return body as T;
 }
@@ -131,27 +134,24 @@ export async function streamChat(
     body: JSON.stringify({ thread_id: threadId, message }),
     signal,
   });
-  if (!res.ok || !res.body) {
-    const text = await res.text();
-    let body: unknown = text;
-    try {
-      body = text ? JSON.parse(text) : null;
-    } catch {
-      // not json; keep the raw text as the detail
-    }
-    throw new ApiError(res.status, body);
-  }
+  if (!res.ok || !res.body) throw new ApiError(res.status, await readBody(res));
   const reader = res.body.getReader();
   // stream: true keeps a multi-byte character that's split across reads from turning into "�"
   const decoder = new TextDecoder();
   let buffer = "";
+  let ended = false;
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
     const parsed = parseSSE(buffer + decoder.decode(value, { stream: true }));
     buffer = parsed.rest;
-    parsed.events.forEach((e) => onEvent(e as ChatEvent));
+    parsed.events.forEach((e) => {
+      ended ||= e.event === "done" || e.event === "error";
+      onEvent(e as ChatEvent);
+    });
   }
+  // the server always ends a turn with done or error; a body that just stops was cut off (backend died, proxy dropped it)
+  if (!ended) throw new Error("the reply stream ended before the answer finished");
 }
 
 export function getChatHistory(threadId: string): Promise<ChatTurn[]> {

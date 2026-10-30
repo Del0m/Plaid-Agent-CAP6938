@@ -122,6 +122,12 @@ Run them from `backend/`:
 
 **Why it's there:** It shows that the tools reach data only through the gateway. A tool that queried the database directly would leave no audit line.
 
+## `test_search_kb_description_does_not_ask_for_urls`
+
+**What it does:** Checks that the `search_kb` description says neither "cite" nor "url".
+
+**Why it's there:** The description used to say "cite the source_url in your answer", which contradicts the system prompt's "never write URLs or name other websites" (spec amendment a1). When the model called `search_kb`, its schema told it to write raw, or invented, links. It now says to refer to a passage by its title. The review on #9 found it.
+
 ## `test_search_kb_output_shape`
 
 **What it does:** Searches once and checks that the output is exactly `{"purpose": "kb", "results": [...]}` holding the knowledge base's results, and that the knowledge base was asked for 4.

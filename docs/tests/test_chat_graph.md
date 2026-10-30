@@ -84,6 +84,18 @@ Run them from `backend/`:
 
 **Why it's there:** The cap is per question. If the count carried over, a long conversation would eventually lose its tools for good.
 
+## `test_tool_rounds_reset_without_the_caller`
+
+**What it does:** Turn 1 uses all 6 tool rounds. Turn 2 is invoked with only its message, no `tool_rounds`, and the test checks that its model call has tools bound.
+
+**Why it's there:** The reset used to depend on every caller passing `tool_rounds: 0`, and the count is stored in the checkpoint. A caller that forgot (an eval harness, a later endpoint) inherited the old count and lost its tools, so the model answered balance questions without looking them up. The retrieve step now resets it. The review on #9 found it.
+
+## `test_dangling_tool_calls_answered_before_the_model_sees_them`
+
+**What it does:** Runs a turn whose history holds a tool call with no result, as a turn cut off mid-tool leaves it. It checks that the model is sent an `error:` ToolMessage for that call right after it.
+
+**Why it's there:** A closed tab or an Ollama timeout after a tool call leaves an unanswered call in the checkpoint, and every later turn was built on it. The stored history is left as it is (GET /chat shows the call as failed, which is true), but the model now gets a stand-in result for each unanswered call. The review on #9 found it.
+
 ## `test_memory_across_turns`
 
 **What it does:** Runs two turns on one thread and checks that the second model call sees the first question and the first answer.
@@ -120,9 +132,9 @@ Run them from `backend/`:
 
 ## `test_sources_by_turn_keyed_by_question_id`
 
-**What it does:** Runs two turns with different results and checks that `sources_by_turn` maps each user message's id to that turn's sources.
+**What it does:** Runs two turns with different results and checks that `sources_by_turn` maps each user message's id to that turn's sources: title, section and URL only, without the passage text.
 
-**Why it's there:** `GET /chat/{id}` uses this to show each answer's own sources after a refresh. `sources` alone only holds the latest turn's.
+**Why it's there:** `GET /chat/{id}` uses this to show each answer's own sources after a refresh. `sources` alone only holds the latest turn's. History only needs the citation, and the checkpointer rewrites every channel on every step, so storing about four full passages per question grew long threads for nothing. The review on #9 found it.
 
 ## `test_live_tool_call_round_trip`
 
