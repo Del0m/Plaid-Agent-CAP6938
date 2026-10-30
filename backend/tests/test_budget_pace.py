@@ -129,3 +129,25 @@ def test_lines_keep_given_order_and_excluded_skipped():
     results = evaluate(lines, [t(2026, 10, 1, -400000, "INCOME")], date(2026, 10, 15))
     assert [r.category for r in results] == ["TRAVEL", "FOOD_AND_DRINK"]
     assert all(r.spent_cents == 0 for r in results)
+
+
+# review on #15: November's rent paid Oct 31 is November's, so October isn't over its limit
+def test_fixed_bill_paid_early_not_over_limit():
+    rent = [t(2026, 10, 1, 150000, "RENT_AND_UTILITIES"), t(2026, 10, 31, 150000, "RENT_AND_UTILITIES")]
+    r = one([fixed("RENT_AND_UTILITIES", 150000)], rent, date(2026, 10, 31))
+    assert r.spent_cents == 150000
+    assert r.flagged is False
+
+
+# only a charge that looks like the bill (within 10% of the limit) moves; anything else is this month's
+def test_late_charge_unlike_the_bill_still_counts():
+    rent = [t(2026, 10, 1, 150000, "RENT_AND_UTILITIES"), t(2026, 10, 30, 9000, "RENT_AND_UTILITIES")]
+    r = one([fixed("RENT_AND_UTILITIES", 150000)], rent, date(2026, 10, 31))
+    assert r.spent_cents == 159000
+    assert r.reason == "over_limit"
+
+
+# flexible spending in the last days of a month is never moved
+def test_flexible_late_spending_not_moved():
+    r = one([flex("FOOD_AND_DRINK", 30000)], [t(2026, 10, 30, 30000)], date(2026, 10, 31))
+    assert r.spent_cents == 30000

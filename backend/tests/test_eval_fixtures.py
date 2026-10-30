@@ -148,3 +148,16 @@ def test_text_facts_not_in_question():
     for s in load_scenarios(REPO / "eval" / "scenarios"):
         for f in s.expect.facts:
             assert f.text is None or f.text.lower() not in s.question.lower(), (s.id, f.text)
+
+
+# review on #10: liability fields seed() reads must be checked at load time, not fail inside a run as a silent 0
+@pytest.mark.parametrize("field, value", [
+    ("apr", "24.99"), ("min_payment", "95"), ("due_in_days", 12.5), ("due_in_days", -1), ("kind", "credit card"),
+])
+def test_bad_liability_field_rejected(tmp_path, field, value):
+    rejected(write(tmp_path, lambda d: d["user"]["accounts"][2]["liability"].update({field: value})), field)
+
+
+# two accounts with one name would share a plaid_account_id and fail at seed time
+def test_duplicate_account_name_rejected(tmp_path):
+    rejected(write(tmp_path, lambda d: d["user"]["accounts"][1].update(name="Everyday Checking")), "name")

@@ -251,6 +251,92 @@ def test_sync_route_hides_other_users_items(client, db, fake):
     assert fake.calls == []
 
 
+def test_partial_link_sync_failure_stays_retryable_after_cursor_commit(client, db, fake, monkeypatch):
+    monkeypatch.setattr(plaid, "exchange_public_token", lambda _: ("access-test", "item-dev"))
+    fake.sync_pages[None] = page(added=[txn("t1")])
+    fake.responses["/accounts/balance/get"] = {"accounts": [account(current=250)]}
+    fake.responses["/liabilities/get"] = PlaidError(500, "INTERNAL_SERVER_ERROR", "secret detail")
+
+    response = client.post("/plaid/exchange", json={"public_token": "public-test"})
+    item_id = response.json()["item_id"]
+    assert get_item(db, item_id).txn_cursor == "c-end"
+    assert get_item(db, item_id).status == "sync_failed"
+    assert client.get("/dashboard").json()["unsynced_items"] == [
+        {"id": item_id, "institution_name": None, "syncing": False},
+    ]
+    fake.sync_pages["c-end"] = page()
+    fake.responses["/liabilities/get"] = liabilities_response()
+    assert client.post(f"/plaid/items/{item_id}/sync").status_code == 200
+    assert client.get("/dashboard").json()["unsynced_items"] == []
+    assert get_item(db, item_id).status == "active"
+
+
+@pytest.mark.parametrize("error", [RuntimeError("kept changing: secret"), KeyError("secret account")])
+def test_unexpected_retry_failure_rolls_back_and_returns_safe_error(client, db, fake, monkeypatch, error):
+    from app.api import plaid as plaid_api
+    from app.api.deps import DEV_USER_EMAIL
+    item_id = seed_item(db, email=DEV_USER_EMAIL)
+
+    def fail(session, item):
+        item.txn_cursor = "must-not-be-committed"
+        session.flush()
+        raise error
+
+    monkeypatch.setattr(plaid_api, "sync_item", fail)
+    response = client.post(f"/plaid/items/{item_id}/sync")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Bank sync failed. Try again."}
+    assert get_item(db, item_id).txn_cursor is None
+    assert get_item(db, item_id).status == "sync_failed"
+
+
+def test_concurrent_syncs_serialize_and_reload_cursor(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.db.base import Base
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'sync.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    item_id = seed_item(factory)
+    first_fetch, release_first, second_attempt = threading.Event(), threading.Event(), threading.Event()
+    cursors = []
+
+    def fetch(path, body):
+        assert path == "/transactions/sync"
+        cursors.append(body.get("cursor"))
+        if len(cursors) == 1:
+            first_fetch.set()
+            assert release_first.wait(3)
+            return page(added=[txn("only-once")], next_cursor="new-cursor")
+        assert body["cursor"] == "new-cursor"
+        return page(next_cursor="new-cursor")
+
+    monkeypatch.setattr(plaid, "plaid_post", fetch)
+    try:
+        with factory() as first, factory() as second, ThreadPoolExecutor(max_workers=2) as pool:
+            first_item, second_item = first.get(PlaidItem, item_id), second.get(PlaidItem, item_id)
+            a = pool.submit(sync_transactions, first, first_item)
+            assert first_fetch.wait(3)
+
+            def second_sync():
+                second_attempt.set()
+                return sync_transactions(second, second_item)
+
+            b = pool.submit(second_sync)
+            assert second_attempt.wait(3)
+            release_first.set()
+            a.result(timeout=3)
+            b.result(timeout=3)
+        assert cursors == [None, "new-cursor"]
+        assert count(factory, Transaction) == 1
+    finally:
+        release_first.set()
+        engine.dispose()
+
+
 def webhook(code="SYNC_UPDATES_AVAILABLE", item_id="item-u-1"):
     return {"webhook_type": "TRANSACTIONS", "webhook_code": code, "item_id": item_id}
 

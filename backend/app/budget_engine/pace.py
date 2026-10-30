@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Iterable, Literal, Optional, Sequence
 
-from app.budget_engine.txns import Txn, category_totals, month_end, month_start, spending
+from app.budget_engine.txns import Txn, category_totals, month_end, month_start, shift_early_bills, spending
 
 # today's overspend flags (architecture 6.4). budget periods are calendar months.
 
@@ -31,7 +31,9 @@ class PaceResult:
 
 
 def evaluate(lines: Sequence[BudgetLine], txns: Iterable[Txn], today: date) -> list[PaceResult]:
-    spent = category_totals(spending(txns), month_start(today), today)
+    # a fixed bill paid early for next month is next month's (judged against the line's limit as the usual bill)
+    bills = {line.category: line.limit_cents for line in lines if line.kind == "fixed"}
+    spent = category_totals(shift_early_bills(spending(txns), bills), month_start(today), today)
     days_elapsed, days_in_period = today.day, month_end(today).day
 
     results = []

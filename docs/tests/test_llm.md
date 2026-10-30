@@ -38,3 +38,14 @@ These tests cover `app/agents/llm.py`, the only place the app creates an LLM or 
 
 **Why it's there:** The knowledge base (TPC-14) embeds with whatever this returns. If it ignored config, an M5 embedding-model comparison would quietly keep using nomic-embed-text.
 
+## `test_get_chat_model_sets_context_and_timeout`
+
+**What it does:** Sets `LLM_NUM_CTX` and `LLM_TIMEOUT_SECONDS` in config and checks that the ChatOllama client gets `num_ctx=4096` and `client_kwargs={"timeout": 12.0}`.
+
+**Why it's there:** Ollama's default context is small, and a longer prompt is cut from the front without an error, which drops the system instructions first. And with no timeout, a stuck model blocks the request forever.
+
+## `test_blank_numeric_env_vars_use_defaults`
+
+**What it does:** Sets `LLM_TEMPERATURE`, `LLM_NUM_CTX` and `LLM_TIMEOUT_SECONDS` to empty strings, reloads `app.config`, and checks that each falls back to a valid default. It then reloads config again with the real environment.
+
+**Why it's there:** `.env.example` leaves optional settings blank, and `float("")` raised at import, so a blank value stopped the app, alembic and every test from starting. The numbers now use `os.getenv(...) or default`, like `PROMPT_AUDIT_PATH` already did.

@@ -175,6 +175,19 @@ describe("ChatPanel", () => {
     expect(screen.queryByText("Old question")).toBeNull();
   });
 
+  // review on #9: history for the old thread that arrives after New chat must not fill the new one
+  test("history that arrives after New chat is dropped", async () => {
+    sessionStorage.setItem(THREAD_KEY, "abc");
+    let resolveHistory: (t: ChatTurn[]) => void = () => {};
+    historyMock.mockReturnValue(new Promise((r) => (resolveHistory = r)));
+    render(<ChatPanel />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await act(async () => resolveHistory([{ role: "user", text: "Old question", tools: [] }]));
+
+    expect(screen.queryByText("Old question")).toBeNull();
+  });
+
   // crypto.randomUUID only exists on https and localhost; the phone demo opens http://<lan-ip>:3000
   test("works when crypto.randomUUID is unavailable", async () => {
     vi.restoreAllMocks();

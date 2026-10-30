@@ -33,10 +33,10 @@ describe("streamChat", () => {
   });
 
   test("decodes a character split across chunks", async () => {
-    const wire = bytes('event: token\ndata: {"text":"café"}\n\n');
+    const wire = bytes('event: token\ndata: {"text":"café"}\n\nevent: done\ndata: {}\n\n');
     const at = wire.indexOf(0xc3) + 1; // between the two bytes of é
     const { events } = await collect(streamed([wire.slice(0, at), wire.slice(at)]));
-    expect(events).toEqual([{ event: "token", data: { text: "café" } }]);
+    expect(events[0]).toEqual({ event: "token", data: { text: "café" } });
   });
 
   test("throws ApiError 409 when busy", async () => {
@@ -47,6 +47,17 @@ describe("streamChat", () => {
   test("throws ApiError on 500", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("boom", { status: 500 })));
     await expect(streamChat("t1", "hi", () => {})).rejects.toBeInstanceOf(ApiError);
+  });
+
+  // review on #9: a body that ends with no done/error event was cut off, not finished
+  test("throws when the stream ends without done or error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamed([bytes('event: token\ndata: {"text":"Pay "}\n\n')])));
+    await expect(streamChat("t1", "hi", () => {})).rejects.toThrow(/ended/);
+  });
+
+  test("an error event counts as the end", async () => {
+    const { events } = await collect(streamed([bytes('event: error\ndata: {"message":"x"}\n\n')]));
+    expect(events.map((e) => e.event)).toEqual(["error"]);
   });
 
   test("posts thread_id and message as JSON to /api/chat", async () => {

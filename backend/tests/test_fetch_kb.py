@@ -203,3 +203,33 @@ def test_blank_thead_keeps_first_data_row(tmp_path):
 
     assert "Age 50+ — $8,000" in lines
     assert "Under 50 — $7,000" in lines
+
+
+# review on #8: a header row shorter than the data rows (colspan) must not drop the last values
+def test_short_header_keeps_every_cell(tmp_path):
+    lines = flattened_lines(tmp_path, "<table><thead><tr><th>Filing status</th><th>Full</th><th>Partial</th></tr>"
+                                      "</thead><tbody><tr><td>Single</td><td>$146,000</td><td>$161,000</td>"
+                                      "<td>$7,000</td><td>$8,000</td></tr></tbody></table>")
+
+    assert "Single — Full: $146,000; Partial: $161,000; $7,000; $8,000" in lines
+
+
+# with no header row, an empty cell is skipped instead of leaving "label — ; ; x"
+def test_headerless_row_skips_empty_cells(tmp_path):
+    lines = flattened_lines(tmp_path, "<table><tbody><tr><td>Age 50+</td><td></td><td>$8,000</td></tr>"
+                                      "<tr><td>Under 50</td><td>$7,000</td><td></td></tr></tbody></table>")
+
+    assert "Age 50+ — $8,000" in lines
+    assert "Under 50 — $7,000" in lines
+
+
+# any failure on one source, not just the expected two kinds, is reported and the run goes on
+def test_unexpected_error_reported_others_written(tmp_path):
+    broken = entry("broken", url=URL + "/broken")
+    del broken["topic"]
+    kb = make_kb(tmp_path, broken, entry())
+
+    failed = fetch_all(kb, client({URL + "/broken": html(page()), URL: html(page())}), today=TODAY)
+
+    assert failed == ["broken"]
+    assert (kb / "sources" / "good.md").exists()

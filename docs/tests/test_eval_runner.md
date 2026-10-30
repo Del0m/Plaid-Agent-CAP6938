@@ -23,7 +23,7 @@ Run them from `backend/`:
 - the tool call `{"name": "get_debts", "args": {}}`;
 - a tool result containing the seeded card and its APR;
 - the knowledge base's result as `sources`;
-- a positive latency, no error, and the run number passed in.
+- a positive latency, no error, and the run number passed in. Latency covers the agent's answer only; see `test_latency_excludes_setup`.
 
 The audit log has exactly one `debts` entry.
 
@@ -40,6 +40,12 @@ The audit log has exactly one `debts` entry.
 **What it does:** Runs two scenarios in turn. The second scenario's `get_accounts` result contains its own "Gold Card" and not the first scenario's "Platinum Card".
 
 **Why it's there:** Each run gets its own in-memory database. If state leaked between runs, a scenario could pass using another scenario's data.
+
+## `test_latency_excludes_setup`
+
+**What it does:** Makes `seed` sleep 0.3 s before seeding, with a model that answers at once, and checks that the recorded latency is under 0.25 s.
+
+**Why it's there:** The timer used to start before the throwaway database was created and seeded, so setup time was added to `latency_mean_s` and `latency_p95_s`. A run that failed during seeding also reported a near-zero latency that pulled the mean down. The timer now starts just before `graph.invoke`, and a run that fails before then reports 0. The review on #10 found it.
 
 ## `test_live_debt_highest_apr`
 

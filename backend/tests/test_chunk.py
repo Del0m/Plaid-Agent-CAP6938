@@ -112,3 +112,23 @@ def test_short_doc_one_chunk_stable_ids(tmp_path):
     c = chunks[0]
     assert (c.title, c.source_url, c.topic, c.fetched_at) == tuple(FRONT.values())
     assert c.section == "Doc Title"
+
+
+# review on #8: sources/foo.md and sources/local/foo.md both exist after a license change, so ids must differ
+def test_local_source_ids_dont_collide(tmp_path):
+    (tmp_path / "local").mkdir()
+    committed = write_source(tmp_path, "Some text.\n", slug="foo")
+    local = write_source(tmp_path / "local", "Other text.\n", slug="foo")
+
+    assert [c.id for c in chunk_source(committed)] == ["foo-0"]
+    assert [c.id for c in chunk_source(local)] == ["local-foo-0"]
+
+
+# a chunk's index is its position in its own document, the number its id ends in
+def test_chunk_index_matches_id(tmp_path):
+    path = write_source(tmp_path, words(CHUNK_WORDS * 2) + "\n")
+
+    chunks = chunk_source(path)
+
+    assert len(chunks) > 1
+    assert [c.index for c in chunks] == [int(c.id.rsplit("-", 1)[1]) for c in chunks]
