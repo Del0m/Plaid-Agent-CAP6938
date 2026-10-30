@@ -23,6 +23,7 @@ from cryptography.fernet import Fernet
 # app.security fails at import without a key; nothing here decrypts anything
 os.environ.setdefault("FERNET_KEY", Fernet.generate_key().decode())
 
+from app.budget_engine import fit
 from app.budget_engine.fit import fit_budget
 from app.budget_engine.txns import add_months, category_totals, month_end, month_start, spending
 from app.budget_service.initialize import initialize_budget, load_txns
@@ -53,13 +54,17 @@ def run_profile(profile: Profile) -> dict:
     with temp_db() as Session, Session() as s:
         uid = seed_profile(s, profile)
         period = initialize_budget(s, uid, profile.today)
+        # a profile with no complete month of history gets no budget; it's reported, not scored
+        if period is None:
+            return {"id": profile.id, "description": profile.description, "budget": None}
         budget = {
             "lines": [{"category": ln.category, "kind": ln.kind, "limit_cents": ln.limit_cents,
                        "outlier_months": [o["month"] for o in ln.fit_json["outliers"]]}
                       for ln in sorted(period.lines, key=lambda ln: ln.category)],
             "skipped": period.fit_json["skipped"],
         }
-        history = load_txns(s, uid, add_months(current, -3), current - timedelta(days=1))
+        # the same window initialize_budget fits (read at call time, so it follows HISTORY_MONTHS)
+        history = load_txns(s, uid, add_months(current, -fit.HISTORY_MONTHS), current - timedelta(days=1))
         actuals = category_totals(spending(load_txns(s, uid, current, month_end(current))),
                                   current, month_end(current))
     result = {"id": profile.id, "description": profile.description, "budget": budget}
@@ -78,6 +83,9 @@ def _pct(x) -> str:
 
 def _print_budget(r: dict) -> None:
     print(f"\n{r['id']}: {r['description']}")
+    if r["budget"] is None:
+        print("  no budget: no complete month of history")
+        return
     for ln in r["budget"]["lines"]:
         outliers = f"  (outlier: {', '.join(ln['outlier_months'])})" if ln["outlier_months"] else ""
         print(f"  {ln['category']:<22} {ln['kind']:<9} {_dollars(ln['limit_cents']):>11}{outliers}")
@@ -95,12 +103,13 @@ def _print_table(results: list[dict], pooled: dict) -> None:
 
 def run(profiles, out_root: Path, day: date) -> Path:
     results = [run_profile(p) for p in profiles]
+    scored = [r for r in results if r["budget"] is not None]
     # pooled over every scored line of every profile, so each line counts once
-    pooled = {c: mape([(ln["limit_cents"], ln["actual_cents"]) for r in results for ln in r[c]["lines"]
+    pooled = {c: mape([(ln["limit_cents"], ln["actual_cents"]) for r in scored for ln in r[c]["lines"]
                        if ln["actual_cents"] > 0]) for c in CENTERS}
     for r in results:
         _print_budget(r)
-    _print_table(results, pooled)
+    _print_table(scored, pooled)
     path = results_dir(out_root, day, "budget_accuracy") / "results.json"
     _write(path, {"git_commit": _git_commit(), "profiles": results, "pooled": pooled})
     print(f"\nwrote {path}")

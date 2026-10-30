@@ -1,6 +1,6 @@
 from datetime import date as Date, datetime, timezone
 from typing import Literal, Optional
-from sqlalchemy import JSON, Enum, Float, ForeignKey, UniqueConstraint
+from sqlalchemy import JSON, Double, Enum, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import Base
 
@@ -123,7 +123,8 @@ class BudgetLine(Base):
     kind: Mapped[str] = mapped_column(Enum("fixed", "flexible", name="budget_line_kind"))
     limit_cents: Mapped[int]
     spent_cents: Mapped[int] = mapped_column(default=0)
-    last_pace: Mapped[Optional[float]]                      # a ratio, not money
+    # a ratio, not money. Double pinned to match the migration: a bare float is Float on sqlalchemy 2.0
+    last_pace: Mapped[Optional[float]] = mapped_column(Double)
     source: Mapped[str] = mapped_column(Enum("init", "adapted", "user", name="budget_line_source"))
     fit_json: Mapped[Optional[dict]] = mapped_column(JSON)
 

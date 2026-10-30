@@ -82,6 +82,12 @@ npm test -- components/ChatPanel.test.tsx
 
 **Why it's there:** This was a real bug, found while writing the tests above. The history request from mount resolved after the first send and wiped out the new turns. A person who types fast on a slow connection would have watched their message disappear.
 
+## `history that arrives after New chat is dropped`
+
+**What it does:** Holds the history request for the stored thread `abc`, clicks New chat, then lets the history arrive. It checks that the old question isn't shown.
+
+**Why it's there:** On a slow load (the phone demo over LAN, a cold backend), clicking New chat before history arrived let the old thread's turns fill the new, empty conversation. The next message then went to the new thread, whose server history didn't match the screen. The history callback now checks that the thread it loaded is still the current one. The review on #9 found it.
+
 ## `works when crypto.randomUUID is unavailable`
 
 **What it does:** Removes `crypto.randomUUID` and checks that a send still streams an answer, with a thread id that matches the backend's `^[A-Za-z0-9-]{1,64}$`.

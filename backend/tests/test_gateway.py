@@ -157,6 +157,7 @@ def test_spending_category_lists_capped_newest_first(db, tmp_path):
 
     assert out["category"] == "FOOD_AND_DRINK"
     assert len(out["transactions"]) == 50
+    assert (out["count"], out["truncated"]) == (60, True)
     assert out["transactions"][0]["date"] == TODAY.isoformat()
     assert "TRANSFER_OUT" not in json.dumps(out)
 
@@ -172,14 +173,16 @@ def test_spending_category_case_insensitive_and_zero(db, tmp_path):
         travel = data(g.build_context("spending", category="TRAVEL"))
 
     assert (dining["category"], dining["total"]) == ("FOOD_AND_DRINK", 6.5)
-    assert travel == {"category": "TRAVEL", "total": 0.0, "transactions": []}
+    assert travel == {"category": "TRAVEL", "total": 0.0, "direction": "outflow", "count": 0, "truncated": False,
+                      "transactions": []}
 
 
+# 30 calendar days with today included: Sep 22 - Oct 21
 def test_spending_defaults_to_last_30_days(db, tmp_path):
     with db() as s:
         acct = add_account(s, add_user(s, "u-1", "a@example.com"), "Checking")
-        add_txn(s, acct, 100, "IN_WINDOW", day=date(2026, 9, 21))
-        add_txn(s, acct, 100, "TOO_OLD", day=date(2026, 9, 20))
+        add_txn(s, acct, 100, "IN_WINDOW", day=date(2026, 9, 22))
+        add_txn(s, acct, 100, "TOO_OLD", day=date(2026, 9, 21))
         s.commit()
         totals = data(PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl").build_context("spending"))
 
@@ -287,3 +290,75 @@ def test_diagnose_unnamed_merchant(db, tmp_path):
     d = data(diagnose_prompt(db, tmp_path, [gm(12, 60000, None)])[1])
     assert d["merchants"][0]["merchant"] is None
     assert d["transactions"][0]["merchant"] is None
+
+
+# review on #6: transfers and card payments move money that's already counted, so they aren't spending
+def test_spending_leaves_out_transfers_and_card_payments(db, tmp_path):
+    with db() as s:
+        acct = add_account(s, add_user(s, "u-1", "a@example.com"), "Checking")
+        add_txn(s, acct, 500, "FOOD_AND_DRINK")
+        add_txn(s, acct, 500, "LOAN_PAYMENTS", detailed="LOAN_PAYMENTS_CREDIT_CARD_PAYMENT")
+        add_txn(s, acct, 900, "LOAN_PAYMENTS", detailed="LOAN_PAYMENTS_STUDENT_LOAN_PAYMENT")
+        add_txn(s, acct, 10000, "TRANSFER_OUT")
+        add_txn(s, acct, -250000, "INCOME")
+        s.commit()
+        totals = data(PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl").build_context("spending"))
+
+    assert totals == {"LOAN_PAYMENTS": 9.0, "FOOD_AND_DRINK": 5.0}
+
+
+# income is money in (negative in plaid's convention); asking for it gives a positive total, not $0
+def test_spending_income_question_reports_inflow(db, tmp_path):
+    with db() as s:
+        acct = add_account(s, add_user(s, "u-1", "a@example.com"), "Checking")
+        add_txn(s, acct, -250000, "INCOME", merchant="ACME PAYROLL")
+        add_txn(s, acct, 500, "FOOD_AND_DRINK")
+        s.commit()
+        out = data(PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl")
+                   .build_context("spending", category="INCOME"))
+
+    assert (out["total"], out["direction"], out["count"]) == (2500.0, "inflow", 1)
+    assert out["transactions"] == [{"date": "2026-10-10", "amount": 2500.0, "merchant": None}]
+
+
+def test_spending_reversed_range_raises(db, tmp_path):
+    with db() as s:
+        with pytest.raises(ValueError):
+            PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl").build_context(
+                "spending", start=date(2026, 11, 1), end=TODAY)
+
+
+# a pseudonym passed back in must look like one, or prompt text could ride in as the "user"
+def test_bad_pseudonym_rejected(db, tmp_path):
+    with db() as s:
+        with pytest.raises(ValueError):
+            PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl", pseudonym="u-jane")
+
+
+# the debt balance is the account's live balance, the same number the dashboard totals use
+def test_debt_balance_from_account(db, tmp_path):
+    with db() as s:
+        item = add_user(s, "u-1", "a@example.com")
+        card = add_account(s, item, "Card", type_="credit", balance=41000,
+                           liability={"kind": "credit", "apr": 22.0})
+        card.current_balance_cents = 45000          # a later balance refresh; the liability copy is older
+        s.commit()
+        [debt] = data(PrivacyGateway(s, "u-1", audit_path=tmp_path / "a.jsonl").build_context("debts"))
+
+    assert debt["balance"] == 450.0
+
+
+# the audit file holds every prompt: owner-only, and rotated to one .1 backup instead of growing forever
+def test_audit_file_private_and_rotated(db, tmp_path, monkeypatch):
+    path = tmp_path / "a.jsonl"
+    with db() as s:
+        add_user(s, "u-1", "a@example.com")
+        s.commit()
+        g = PrivacyGateway(s, "u-1", audit_path=path)
+        g.build_context("accounts")
+        monkeypatch.setattr(gw.config, "PROMPT_AUDIT_MAX_BYTES", path.stat().st_size + 10)
+        g.build_context("debts")
+
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert [l["purpose"] for l in audit_lines(path)] == ["debts"]
+    assert [l["purpose"] for l in audit_lines(path.with_name("a.jsonl.1"))] == ["accounts"]

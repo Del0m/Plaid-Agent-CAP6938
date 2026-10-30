@@ -1,9 +1,10 @@
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
-from typing import Literal, Sequence
+from typing import Iterable, Literal, Sequence
 
 from app.budget_engine.pace import BudgetLine
-from app.budget_engine.txns import round_cents
+from app.budget_engine.txns import Txn, category_totals, month_end, round_cents, shift_early_bills, spending
 
 # next month's limits at period close (architecture 6.5). smoothing and the clamp keep the
 # budget from chasing one bad month.
@@ -38,3 +39,10 @@ def close_period(lines: Sequence[BudgetLine], actuals: dict[str, int], accepted:
             new, source = min(max(smoothed, low), high), "smoothed"
         out.append(Adjustment(line.category, old, actual, new, source))
     return out
+
+
+# what each category actually spent in the month that starts on `month`, for close_period. next month's fixed bill
+# paid in this month's last days is left out, so a fixed line can't adopt a doubled month
+def period_actuals(lines: Sequence[BudgetLine], txns: Iterable[Txn], month: date) -> dict[str, int]:
+    bills = {line.category: line.limit_cents for line in lines if line.kind == "fixed"}
+    return category_totals(shift_early_bills(spending(txns), bills), month, month_end(month))

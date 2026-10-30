@@ -54,7 +54,8 @@ def check_facts(answer: str, expect: Expect) -> FactResult:
         if f.text is not None:
             hit = f.text.lower() in lower
         else:
-            hit = any(abs(n - f.number) <= f.tol for n in numbers)
+            # the epsilon keeps a value exactly one tol away from failing on float rounding (124.24 vs 124.25)
+            hit = any(abs(n - f.number) <= f.tol + 1e-9 for n in numbers)
         if not hit:
             missing.append(f.label)
     forbidden = [w for w in expect.forbid if w.lower() in lower]
@@ -150,8 +151,9 @@ def score_run(record, scenario: Scenario, *, embeddings, judge_model) -> dict:
                    if answer.strip() else None)
     return {
         "facts": {**asdict(facts), "score": facts.score},
-        "tools_ok": tools_ok(scenario.expect, record.tool_calls),
-        "sources_ok": sources_ok(scenario.expect, record.sources),
+        # a run that crashed didn't get the tools or sources right, even when none were expected
+        "tools_ok": not record.error and tools_ok(scenario.expect, record.tool_calls),
+        "sources_ok": not record.error and sources_ok(scenario.expect, record.sources),
         "similarity": sim,
         "judge": verdict.model_dump() if verdict is not None else None,
         "judge_passed": bool(verdict is not None and verdict.passed),

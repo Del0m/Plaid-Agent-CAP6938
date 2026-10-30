@@ -135,3 +135,7 @@ def downgrade() -> None:
 
     op.drop_table('agent_runs')
     # ### end Alembic commands ###
+    # postgres keeps native enum types after their tables go; sqlite has none
+    if op.get_context().dialect.name == "postgresql":
+        for enum in ("budget_period_status", "budget_line_kind", "budget_line_source"):
+            op.execute(f"DROP TYPE IF EXISTS {enum}")

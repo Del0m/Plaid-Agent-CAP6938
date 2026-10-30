@@ -229,3 +229,11 @@ def test_other_integrity_error_raises(db, monkeypatch):
         monkeypatch.setattr(initialize, "_latest_period", lambda session, user_id: None)
         with pytest.raises(IntegrityError):
             initialize_budget(s, "u1", TODAY)
+
+
+# review on #11: the column is Double in the migration; a bare float maps to Float on sqlalchemy 2.0
+def test_last_pace_is_double():
+    from sqlalchemy import Double
+
+    from app.db.models import BudgetLine
+    assert type(BudgetLine.__table__.c.last_pace.type) is Double
