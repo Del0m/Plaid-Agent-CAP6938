@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from eval.fixtures import Expect, Fact, Scenario
-from eval.metrics import (SIM_PREFIX, check_facts, extract_numbers, score_run, similarity, sources_ok,
+from eval.metrics import (SIM_PREFIX, check_facts, extract_numbers, mape, score_run, similarity, sources_ok,
                           summarize, tools_ok)
 
 CHART = "https://www.irs.gov/retirement-plans/roth-comparison-chart"
@@ -201,6 +201,18 @@ def test_score_run_passes_missing_tools_to_judge():
     sc = scenario(expect=expect([Fact(text="x")], tools=["get_debts"]))
     score_run(record(answer="Generic advice."), sc, embeddings=FakeEmbeddings([[1.0], [1.0]]), judge_model=model)
     assert "get_debts" in model.seen[0][-1].content
+
+
+def test_mape_known_case():
+    assert mape([(110, 100), (90, 100), (200, 100)]) == 40.0
+
+
+def test_mape_empty():
+    assert mape([]) is None
+
+
+def test_mape_rounds():
+    assert mape([(1, 3)]) == 66.7
 
 
 # review on #10: a run that crashed never called a tool or retrieved a source, even when none were expected

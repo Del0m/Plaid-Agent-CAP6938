@@ -2,12 +2,12 @@
 
 These tests cover `app/budget_engine/fit.py`, which turns transaction history into the user's first budget (TPC-17, architecture 6.3). The rules:
 - The history is the last 3 complete calendar months.
-- **Fixed** categories (rent, loan payments) get the latest month's amount.
-- **Flexible** categories get the median month × 1.05.
+- **Fixed** categories (rent, loan payments) get the lower median of the months that had the bill (TPC-18 replaced "the latest month").
+- **Flexible** categories get the median month × 1.05. `center="mean"` uses the mean instead; it exists only for the median-vs-mean accuracy comparison (TPC-18).
 - A month above 1.5× the median is recorded as an outlier, so the agent can explain it.
 - A flexible category whose median is $0 is skipped.
 
-TPC-18's `initialize_budget` calls `fit_budget` and stores the result.
+The result also reports its `window`, the months it fitted. TPC-18's `initialize_budget` calls `fit_budget` and stores the result.
 
 Run them from `backend/`:
 
@@ -22,6 +22,7 @@ Run them from `backend/`:
 - `monthly(cat, *cents, start_month=7)` builds one transaction per month on the 2nd, skipping zeros. It's on the 2nd because history that starts after the 3rd drops its first month.
 - `line(result, cat)` finds a fitted line.
 - `NORMAL` is FOOD_AND_DRINK at $400, $450 and $500.
+- `RENT` is `"RENT_AND_UTILITIES"`, and `rent(result)` finds its line.
 
 ---
 
@@ -37,11 +38,71 @@ Run them from `backend/`:
 
 **Why it's there:** It's the spec's outlier case. The median keeps one trip from inflating the budget. The recorded month lets the agent say "Travel was $1,900 in August and was left out" instead of an unexplained number.
 
-## `test_fixed_uses_latest_month_no_markup`
+## `test_fixed_median_no_markup`
 
 **What it does:** Rent of $1,500 each month gives a fixed line of exactly $1,500, with no outliers.
 
 **Why it's there:** A fixed bill isn't padded: 5% extra on rent would be budget that can never be spent.
+
+## `test_fixed_paid_early_double_month`
+
+**What it does:** Rent paid Jul 1, Aug 1 and Aug 20 gives totals of $1,500 / $3,000 / $0 and a limit of $1,500.
+
+**Why it's there:** Paying early puts two rents in one month. The old "latest non-zero month" rule turned this into a $3,000 rent line, 100% off the next month (TPC-18). The lower median of the paying months is one rent. The second payment is on Aug 20 because one in a month's last 3 days now moves to the next month (`test_early_rent_counts_toward_next_month`). This test keeps the median rule covered for a double month the early-bill rule doesn't catch.
+
+## `test_fixed_double_in_last_month`
+
+**What it does:** Rent paid Jul 1, Aug 1, Sep 1 and Sep 30 gives $1,500. The Sep 30 payment now counts toward October, the current month, which isn't fitted.
+
+**Why it's there:** The early payment can land in the last month of the window, with no $0 month after it. Taking the latest month would double the rent.
+
+## `test_fixed_new_lease_ignores_leading_zeros`
+
+**What it does:** Rent first paid in September, with food on Jul 2 keeping the window at July-September (a later day would drop July as a partial first month), gives totals $0 / $0 / $1,500 and a limit of $1,500.
+
+**Why it's there:** A median over all three months would be $0. Months with no rent (here, before the lease) don't count.
+
+## `test_fixed_increase_not_adopted_at_init`
+
+**What it does:** Rent of $1,500 / $1,500 / $1,600 fits at $1,500.
+
+**Why it's there:** It pins the cost of the median rule. A rent increase isn't adopted at init; period close (where a fixed line follows the actual amount) adopts it one month later.
+
+## `test_fixed_even_months_takes_lower`
+
+**What it does:** Rent totals of $0 / $1,500 / $3,000 give a limit of $1,500, not $2,250.
+
+**Why it's there:** This is the usual first-link case: Plaid's history starts mid-July, so July has no rent, and October's rent was paid early on Sep 30. With two paying months, a plain median averages one rent with two. The lower median is always a real month's amount (found in the TPC-18 final review).
+
+## `test_fixed_zero_month_between`
+
+**What it does:** Rent totals of $0 / $1,500 / $0 give $1,500, not $750.
+
+**Why it's there:** A fixed bill is never really $0 in a month; a zero is an artifact of when the payment landed. Only months that had the bill count.
+
+## `test_mean_center_flexible`
+
+**What it does:** With `center="mean"`, TRAVEL at $200 / $1,900 / $250 gives $822.50 (the $783.33 mean × 1.05), and August is still the outlier.
+
+**Why it's there:** The mean is the comparison the accuracy eval measures (architecture 6.3). It is computed exactly with `Decimal`, so the expected cents are exact.
+
+## `test_mean_center_keeps_occasional`
+
+**What it does:** With `center="mean"`, SHOPPING at $0 / $300 / $0 gets a $105 line instead of being skipped.
+
+**Why it's there:** This is the mean's known weakness, and the accuracy eval counts it: a line for a purchase that won't happen next month.
+
+## `test_mean_center_leaves_fixed_alone`
+
+**What it does:** With `center="mean"`, early-paid rent still fits at $1,500.
+
+**Why it's there:** `center` only changes flexible lines, so the median-vs-mean comparison differs in exactly one thing.
+
+## `test_window_reported`
+
+**What it does:** The window is July, August and September for `NORMAL`; August and September for history starting in August; and empty with no transactions or only current-month ones.
+
+**Why it's there:** `initialize_budget` stores the window so the agent can say which months a budget came from. It has to match the months actually fitted, including for short history.
 
 ## `test_fixed_paid_early_moves_to_next_month`
 
@@ -51,7 +112,7 @@ Run them from `backend/`:
 
 ## `test_custom_fixed_set`
 
-**What it does:** Passing `fixed={"ENTERTAINMENT"}` makes entertainment a fixed line at its latest month ($15).
+**What it does:** Passing `fixed={"ENTERTAINMENT"}` makes $10 / $20 / $15 of entertainment a fixed line at its median ($15).
 
 **Why it's there:** TPC-33's recurring detector will add subscription categories to the fixed set. This checks the parameter is honoured, not just the default.
 
@@ -69,7 +130,7 @@ Run them from `backend/`:
 
 ## `test_exclusions_never_lines`
 
-**What it does:** Income, transfers both ways and credit-card payments in every month give an empty result.
+**What it does:** Income, transfers both ways and credit-card payments in every month give no lines and no skipped categories.
 
 **Why it's there:** These would double count (architecture 6.3 step 1). A "TRANSFER_OUT" budget line would be nonsense to the user.
 
