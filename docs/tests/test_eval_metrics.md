@@ -163,3 +163,15 @@ The same three rules apply to `sources_ok` with `source_url`s.
 **What it does:** When a scenario expects `get_debts` and the run never called it, `score_run` passes that to the judge.
 
 **Why it's there:** It connects the scenario's expected tools to the judge's note in the path the CLI actually runs.
+
+## `test_errored_run_fails_tools_and_sources`
+
+**What it does:** Scores an errored run of a scenario that expects no tools and no sources, and checks that `tools_ok` and `sources_ok` are both `False`.
+
+**Why it's there:** An empty expected set is a subset of anything, so a crashed run used to pass both checks. If Ollama timed out on every run of `kb-roth-vs-401k` (which expects no tools), tool accuracy read 100% for a scenario that never answered, and overall source accuracy stayed above 80% even when every run crashed. A run with an error now fails both. The review on #10 found it.
+
+## `test_number_tolerance_is_symmetric`
+
+**What it does:** With the fact 124.25 ± 0.01, checks that `$124.24` and `$124.26` both pass and `$124.27` fails.
+
+**Why it's there:** `abs(124.24 - 124.25)` is `0.0100000000000051` in floating point, so a value exactly one tolerance away passed on one side and failed on the other. The comparison now allows a tiny epsilon. The review on #10 found it.

@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import date
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from langchain_core.messages import AIMessage
 
 from app import config
 from eval.fixtures import load_scenario
+import eval.runner as runner
 from eval.runner import RunRecord, run_once
 from tests.fakes import FakeKB, ScriptedChatModel, ollama_has, tool_call
 from tests.test_eval_fixtures import write
@@ -44,6 +46,21 @@ def test_run_once_model_error_recorded(tmp_path):
     assert rec.error == "ConnectionError: down"
     assert rec.answer == "" and rec.tool_calls == []
 
+
+
+# review on #10: latency is the agent's answer time; database setup and seeding aren't part of it
+def test_latency_excludes_setup(tmp_path, monkeypatch):
+    real_seed = runner.seed
+
+    def slow_seed(*args):
+        time.sleep(0.3)
+        return real_seed(*args)
+
+    monkeypatch.setattr(runner, "seed", slow_seed)
+    rec = run_once(load_scenario(write(tmp_path)), model=model(AIMessage("Pay the card.")), kb=FakeKB(),
+                   audit_path=tmp_path / "a.jsonl", today=TODAY)
+
+    assert 0 < rec.latency_s < 0.25
 
 def test_runs_are_isolated(tmp_path):
     first = load_scenario(write(tmp_path))

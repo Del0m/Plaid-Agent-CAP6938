@@ -201,3 +201,19 @@ def test_score_run_passes_missing_tools_to_judge():
     sc = scenario(expect=expect([Fact(text="x")], tools=["get_debts"]))
     score_run(record(answer="Generic advice."), sc, embeddings=FakeEmbeddings([[1.0], [1.0]]), judge_model=model)
     assert "get_debts" in model.seen[0][-1].content
+
+
+# review on #10: a run that crashed never called a tool or retrieved a source, even when none were expected
+def test_errored_run_fails_tools_and_sources():
+    s = score_run(record(error="ConnectionError: down"), scenario(expect=expect([Fact(text="x")])),
+                  embeddings=Explodes(), judge_model=Explodes())
+
+    assert s["tools_ok"] is False and s["sources_ok"] is False
+
+
+# review on #10: a value exactly one tol away passes on both sides, despite float rounding
+def test_number_tolerance_is_symmetric():
+    e = expect([Fact(number=124.25, tol=0.01)])
+
+    assert check_facts("$124.24", e).passed and check_facts("$124.26", e).passed
+    assert not check_facts("$124.27", e).passed
