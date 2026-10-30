@@ -6,6 +6,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 from ..db.models import Account, Liability, PlaidItem, User
 from ..db.session import get_session
+from ..finance import avalanche_key
 from .deps import get_current_user
 
 # what the dashboard page shows. reads our db only, never plaid, so it's fast and safe to reload
@@ -96,7 +97,7 @@ def get_dashboard(user: User = Depends(get_current_user), session: Session = Dep
         for l, a in liabs
     ]
     # avalanche order: highest APR first, unknown APR last, bigger balance first on a tie
-    debt_rows.sort(key=lambda d: (d.apr is None, -(d.apr or 0), -(d.balance_cents or 0)))
+    debt_rows.sort(key=lambda d: avalanche_key(d.apr, d.balance_cents))
 
     # A cursor only proves transactions succeeded. Later balance/liability failures stay retryable.
     unsynced = session.scalars(
