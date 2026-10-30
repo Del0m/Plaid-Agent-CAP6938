@@ -197,8 +197,8 @@ When creating the Plaid link token, set `transactions.days_requested` to at leas
 The maths is `budget_engine/fit.py` (`fit_budget`), a pure function over the transactions and `today`. The shared spending filter and month helpers are in `budget_engine/txns.py`.
 
 1. Drop transfers, income, and credit-card payments (they're not spending; they'd double count). Refunds are **netted** within a category (purchases − refunds, floored at $0): a returned purchase isn't spending.
-2. Mark **fixed** categories (rent, utilities, loan payments, insurance, and subscriptions found by the recurring detector in section 6a.1). Budget = the most recent month with a non-zero total, with no markup. Rent paid a day early lands in the previous month, so a $0 latest month doesn't give a $0 line.
-3. For **flexible** categories, compute monthly totals for each of the last 3 **complete** calendar months (the current partial month is never fitted; shorter history uses fewer months). Budget = **median** × 1.05. Median, not mean, so one vacation doesn't inflate the budget. A flexible category whose median is $0 (an occasional purchase) gets no line and is listed as skipped, since a $0 limit would flag every time.
+2. Mark **fixed** categories (rent, utilities, loan payments, insurance, and subscriptions found by the recurring detector in section 6a.1). Budget = the most recent month with a non-zero total, with no markup. **Early-paid bills:** a fixed category's charge in a month's last 3 days, within 10% of its usual bill, counts toward the next month (`shift_early_bills` in `txns.py`). So rent paid on Aug 31 for September is September's, and August doesn't hold two rents. Fit's usual bill is the lower median of each month's largest charge in the category. Pace and close use the line's limit.
+3. For **flexible** categories, compute monthly totals for each of the last 3 **complete** calendar months (the current partial month is never fitted; shorter history uses fewer months). The first month of history counts only if its earliest transaction is on day 1–3; history that starts later covers part of that month, which would drag every median down. Budget = **median** × 1.05. Median, not mean, so one vacation doesn't inflate the budget. A flexible category whose median is $0 (an occasional purchase) gets no line and is listed as skipped, since a $0 limit would flag every time.
 4. Store the outliers so the agent can explain the budget. An outlier is a **month** above 1.5× the category median, kept with its 3 largest transactions ("Travel was $1,900 in August and was left out"). It's for explanation only; the median is unchanged.
 
 Learning exercise: compare median vs mean vs trimmed mean on your benchmark users and record the "initial budget accuracy" metric for each.
@@ -214,7 +214,7 @@ flag if pace >= 1.10 and days_elapsed >= 5     # flexible categories
 flag if spent > limit                          # any category, any day
 ```
 
-The `days_elapsed >= 5` guard avoids flagging on day 1 because of one grocery trip. Fixed categories are lumpy (rent lands on the 1st), so judge them only against their limit, not pace. Tune these thresholds with the benchmark, then record the chosen values in the decision log.
+The `days_elapsed >= 5` guard avoids flagging on day 1 because of one grocery trip. Fixed categories are lumpy (rent lands on the 1st), so judge them only against their limit, not pace. Next month's bill paid early (see 6.3) doesn't count toward this month, so it never raises a false over-limit alert. Tune these thresholds with the benchmark, then record the chosen values in the decision log.
 
 This is `budget_engine/pace.py` (`evaluate`). Spending in a category with no budget line is reported to the graph as `unbudgeted` and never flagged; the graph (TPC-19) decides whether to suggest a line.
 
@@ -224,6 +224,7 @@ At the end of each calendar month: for each line, compare `limit` vs actual. App
 This is `budget_engine/close.py` (`close_period`):
 - An accepted value is used as-is, with no clamp.
 - A **fixed** line follows the actual amount (a rent increase is adopted, not smoothed toward), and keeps its old limit when the actual is $0.
+- `period_actuals` computes each category's actual for a month with the 6.3 early-bill rule, so next month's rent paid early can't be adopted as a doubled limit. Period close (TPC-22) calls it.
 - Amounts round half up to the cent.
 
 ### 6.6 Human in the loop
@@ -337,7 +338,7 @@ Implementation steps:
 
 Because the LLM runs locally (Ollama), prompts never leave your machine, which removes the main leak risk from the proposal. Keep the gateway anyway: it still limits what ends up in logs and traces, it keeps prompts small (which matters a lot for an 8B model's accuracy and speed), and it means a hosted model can be swapped in for comparison without a privacy regression. In the report, say clearly that the privacy guarantee comes from local inference *plus* minimization, and that a hosted model would rely on minimization alone.
 
-**Follow-up:** the gateway's `get_spending` still excludes refunds, while the budget engine nets them (section 6.3). Until `get_spending` nets them too, a chat spending total can differ from the budget's pace for the same category.
+**Follow-up:** `get_spending` leaves out income, transfers and credit-card payments the way the budget engine does (fixed on TPC-12 after review), but it still excludes refunds, while the budget engine nets them (section 6.3). Until `get_spending` nets them too, a chat spending total can differ from the budget's pace for the same category.
 
 ---
 
@@ -600,6 +601,7 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-27 | Budget totals net refunds within a category (purchases − refunds, floored at $0) | A returned purchase isn't spending, and counting it would raise false overspend alerts. `get_spending` still excludes refunds until it's aligned (section 7 follow-up) |
 | 2026-10-27 | Budget outliers are months above 1.5× the category median, kept with their top 3 transactions for explanation only | Keeps the median × 1.05 maths exactly; the agent can still say "Travel was $1,900 in August and was left out" |
 | 2026-10-27 | A fixed budget line is the latest non-zero month with no markup, and follows the actual amount at period close (keeping its limit on a $0 month) | Rent paid a day early lands in the previous month; a rent increase should be adopted, not smoothed toward |
+| 2026-10-30 | A fixed category's charge in a month's last 3 days, within 10% of its usual bill, counts toward the next month (fit, pace, close and the next-month proposal); history that starts after the 3rd of its first month doesn't fit that month | Review on #15: early rent doubled one month's total, which raised a false over-limit alert and would be adopted at close. A partial first month dragged every median down |
 | | | |
 
 ---

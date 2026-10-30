@@ -1,5 +1,8 @@
-from app.budget_engine.close import close_period
+from datetime import date
+
+from app.budget_engine.close import close_period, period_actuals
 from app.budget_engine.pace import BudgetLine
+from app.budget_engine.txns import Txn
 
 
 def flex(cat, cents):
@@ -70,3 +73,20 @@ def test_order_preserved():
     lines = [flex("TRAVEL", 10000), flex("FOOD_AND_DRINK", 40000), fixed("RENT_AND_UTILITIES", 150000)]
     adjs = close_period(lines, {}, {})
     assert [a.category for a in adjs] == ["TRAVEL", "FOOD_AND_DRINK", "RENT_AND_UTILITIES"]
+
+
+def t(y, m, d, cents, cat="RENT_AND_UTILITIES"):
+    return Txn(date=date(y, m, d), amount_cents=cents, category=cat)
+
+
+# review on #15: the month's actuals move next month's early rent out, so close can't adopt a doubled bill
+def test_period_actuals_move_early_bill():
+    lines = [fixed("RENT_AND_UTILITIES", 150000), flex("FOOD_AND_DRINK", 40000)]
+    txns = [t(2026, 9, 30, 150000), t(2026, 10, 1, 1), t(2026, 10, 31, 150000),
+            t(2026, 10, 12, 42000, "FOOD_AND_DRINK"), t(2026, 10, 15, 5000, "TRANSFER_OUT")]
+
+    actuals = period_actuals(lines, txns, date(2026, 10, 1))
+
+    assert actuals == {"RENT_AND_UTILITIES": 150001, "FOOD_AND_DRINK": 42000}
+    [rent, _] = close_period(lines, actuals, {})
+    assert rent.new_cents == 150001

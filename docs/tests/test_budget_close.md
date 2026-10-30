@@ -79,3 +79,9 @@ Run them from `backend/`:
 **What it does:** Lines given as [TRAVEL, FOOD, RENT] come back in that order.
 
 **Why it's there:** The caller writes the adjustments back to its stored lines, and the agent lists them in the order the user is used to.
+
+## `test_period_actuals_move_early_bill`
+
+**What it does:** For October, with rent on Sep 30 (October's, paid early), a $0.01 charge on Oct 1, November's rent on Oct 31, $420 of food and a transfer. `period_actuals` gives rent $1,500.01 and food $420, leaving out the transfer, and `close_period` keeps the rent line at $1,500.01.
+
+**Why it's there:** `close_period` takes the actuals as given, and a fixed line adopts its actual. With raw totals, a month holding next month's early rent became a $3,000 limit, and real overspending then went unflagged for two periods. The review on #15 found it. `period_actuals` applies the same early-bill rule as pace: Sep 30's rent counts toward October, and Oct 31's toward November. Period close (TPC-22) will build its actuals with it.

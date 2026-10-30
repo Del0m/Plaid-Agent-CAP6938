@@ -19,7 +19,7 @@ Run them from `backend/`:
 
 - `TODAY` is Oct 15 2026, so the window is July, August and September 2026.
 - `t(y, m, d, cents, cat, ...)` builds a `Txn`.
-- `monthly(cat, *cents, start_month=7)` builds one transaction per month, skipping zeros.
+- `monthly(cat, *cents, start_month=7)` builds one transaction per month on the 2nd, skipping zeros. It's on the 2nd because history that starts after the 3rd drops its first month.
 - `line(result, cat)` finds a fitted line.
 - `NORMAL` is FOOD_AND_DRINK at $400, $450 and $500.
 
@@ -33,7 +33,7 @@ Run them from `backend/`:
 
 ## `test_outlier_month_recorded`
 
-**What it does:** TRAVEL at $200, then $1,900 in August (four purchases), then $250 gives a limit of $262.50. August is the one outlier, recorded with its total, the $250 median and its three biggest purchases ($1,200, $400, $200).
+**What it does:** TRAVEL at $200 (on Jul 2, so July counts as a full month), then $1,900 in August (four purchases), then $250 gives a limit of $262.50. August is the one outlier, recorded with its total, the $250 median and its three biggest purchases ($1,200, $400, $200).
 
 **Why it's there:** It's the spec's outlier case. The median keeps one trip from inflating the budget. The recorded month lets the agent say "Travel was $1,900 in August and was left out" instead of an unexplained number.
 
@@ -43,11 +43,11 @@ Run them from `backend/`:
 
 **Why it's there:** A fixed bill isn't padded: 5% extra on rent would be budget that can never be spent.
 
-## `test_fixed_paid_early_uses_previous_month`
+## `test_fixed_paid_early_moves_to_next_month`
 
-**What it does:** Rent paid in July and on Aug 31 (for September), but nothing in September, still gives $1,500. The September total is 0.
+**What it does:** Rent paid in July and on Aug 31 (for September) gives $1,500, with monthly totals $1,500 / $0 / $1,500: the Aug 31 payment counts toward September.
 
-**Why it's there:** Paying rent a day early moves it into the previous month. "Most recent amount" has to mean the latest month that has one, or the budget would get a $0 rent line.
+**Why it's there:** Rent paid in a month's last 3 days, within 10% of the usual bill, belongs to the next month. This used to assert totals of $1,500 / $1,500 / $0, with the payment left in August. That only worked here because August had no rent of its own; see `test_early_rent_counts_toward_next_month`.
 
 ## `test_custom_fixed_set`
 
@@ -114,3 +114,21 @@ Run them from `backend/`:
 **What it does:** On Jan 10 2027 the window is October-December 2026, and the limit is $472.50.
 
 **Why it's there:** Every January the window runs back across the year. A month-arithmetic slip would fit the wrong months or none.
+
+## `test_first_month_after_the_3rd_not_fitted`
+
+**What it does:** History starts Aug 25 ($100 of food), with $450 in September. Only September is fitted, giving totals `(45000,)` and a $472.50 limit.
+
+**Why it's there:** A first month that's only partly covered was fitted as if it were complete. A user who links mid-month got one or two weeks of spending as a full month, which pulled the median, and every limit, down. The rule: the first month counts only if its earliest transaction is on day 1–3. The review on #15 (and #11) found it.
+
+## `test_first_month_from_the_3rd_counts`
+
+**What it does:** History that starts on Aug 3 keeps August: totals `(40000, 50000)`.
+
+**Why it's there:** It pins the edge of the rule. Day 3 still counts, because a quiet first couple of days doesn't mean the month is missing.
+
+## `test_early_rent_counts_toward_next_month`
+
+**What it does:** Rent posts Jul 1, Aug 1 and Aug 30 (September's). The totals are $1,500 for each month, and the limit is $1,500.
+
+**Why it's there:** Under the latest-non-zero rule, August held two rents and fitted $3,000, twice the real bill. The review on #15 found it. The Aug 30 charge is within 10% of the usual bill (the lower median of each month's largest rent charge) and in August's last 3 days, so it moves to September.

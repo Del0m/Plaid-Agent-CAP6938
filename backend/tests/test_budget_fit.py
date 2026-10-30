@@ -10,8 +10,9 @@ def t(y, m, d, cents, cat="FOOD_AND_DRINK", detailed=None, merchant=None):
     return Txn(date=date(y, m, d), amount_cents=cents, category=cat, detailed=detailed, merchant=merchant)
 
 
+# on the 2nd: history that starts after the 3rd drops its first month (test_first_month_after_the_3rd_not_fitted)
 def monthly(cat, *cents, start_month=7, year=2026):
-    return [t(year, start_month + i, 10, c, cat) for i, c in enumerate(cents) if c]
+    return [t(year, start_month + i, 2, c, cat) for i, c in enumerate(cents) if c]
 
 
 def line(result, cat):
@@ -34,7 +35,7 @@ def test_normal_flexible_median():
 def test_outlier_month_recorded():
     aug = [t(2026, 8, d, c, "TRAVEL", merchant=f"m{d}") for d, c in [(3, 10000), (5, 120000), (9, 20000),
                                                                       (20, 40000)]]
-    txns = [t(2026, 7, 4, 20000, "TRAVEL"), *aug, t(2026, 9, 12, 25000, "TRAVEL")]
+    txns = [t(2026, 7, 2, 20000, "TRAVEL"), *aug, t(2026, 9, 12, 25000, "TRAVEL")]
     travel = line(fit_budget(txns, TODAY), "TRAVEL")
     assert travel.limit_cents == 26250
     assert len(travel.outliers) == 1
@@ -52,11 +53,11 @@ def test_fixed_uses_latest_month_no_markup():
     assert rent.outliers == ()
 
 
-def test_fixed_paid_early_uses_previous_month():
+def test_fixed_paid_early_moves_to_next_month():
     txns = [t(2026, 7, 1, 150000, "RENT_AND_UTILITIES"), t(2026, 8, 31, 150000, "RENT_AND_UTILITIES")]
     rent = line(fit_budget(txns, TODAY), "RENT_AND_UTILITIES")
     assert rent.limit_cents == 150000
-    assert rent.monthly_totals == (150000, 150000, 0)
+    assert rent.monthly_totals == (150000, 0, 150000)
 
 
 def test_custom_fixed_set():
@@ -125,3 +126,25 @@ def test_fit_window_crosses_year():
     food = line(fit_budget(txns, date(2027, 1, 10)), "FOOD_AND_DRINK")
     assert food.monthly_totals == (40000, 45000, 50000)
     assert food.limit_cents == 47250
+
+
+# review on #15: history that starts after the 3rd covers only part of its first month, which isn't fitted
+def test_first_month_after_the_3rd_not_fitted():
+    txns = [t(2026, 8, 25, 10000), t(2026, 9, 10, 45000)]
+    food = line(fit_budget(txns, TODAY), "FOOD_AND_DRINK")
+    assert food.monthly_totals == (45000,)
+    assert food.limit_cents == 47250
+
+
+def test_first_month_from_the_3rd_counts():
+    food = line(fit_budget([t(2026, 8, 3, 40000), t(2026, 9, 10, 50000)], TODAY), "FOOD_AND_DRINK")
+    assert food.monthly_totals == (40000, 50000)
+
+
+# review on #15: next month's rent paid in the last 3 days of this one belongs to next month
+def test_early_rent_counts_toward_next_month():
+    txns = [t(2026, 7, 1, 150000, "RENT_AND_UTILITIES"), t(2026, 8, 1, 150000, "RENT_AND_UTILITIES"),
+            t(2026, 8, 30, 150000, "RENT_AND_UTILITIES")]
+    rent = line(fit_budget(txns, TODAY), "RENT_AND_UTILITIES")
+    assert rent.monthly_totals == (150000, 150000, 150000)
+    assert rent.limit_cents == 150000
