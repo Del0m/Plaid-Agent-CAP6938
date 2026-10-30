@@ -47,3 +47,21 @@ Run them from `backend/`:
 **What it does:** In the occasional profile, the mean fit gives the one-off June purchase a line that August can't score, while the median skips it, and the stored budget lists it as skipped.
 
 **Why it's there:** It's the mean's known weakness, and it only shows up in `zero_actual_lines`, not in the MAPE. Checking it here makes sure the report surfaces it.
+
+## `test_history_window_follows_history_months`
+
+**What it does:** Sets `fit.HISTORY_MONTHS` to 4, runs the vacation profile on Sep 1, and records the history passed to each scored fit. Every fit's history must start in May, four months back.
+
+**Why it's there:** The eval loaded history with a hardcoded `-3`, a copy of `initialize_budget`'s window. If `HISTORY_MONTHS` changed, the stored budget and the median/mean fits being scored would use different windows, and the comparison would no longer be like for like. The window now reads `fit.HISTORY_MONTHS` at call time. The review on #11 found it.
+
+## `test_profile_without_a_budget_is_reported`
+
+**What it does:** Runs the steady profile with `today` set to May 20, when it has no complete month of history, and checks that the result's `budget` is `None`.
+
+**Why it's there:** `initialize_budget` returns `None` when there's nothing to fit, and `run_profile` then crashed on `period.lines`, stopping the whole eval before `results.json` was written. The review on #11 found it.
+
+## `test_run_with_an_unbudgeted_profile`
+
+**What it does:** Runs the eval over one normal profile and one with no budget. It checks that the pooled median MAPE is still computed and that the printout says "no budget".
+
+**Why it's there:** A profile with no budget has no scores, so pooling and the results table only include profiles that got one.

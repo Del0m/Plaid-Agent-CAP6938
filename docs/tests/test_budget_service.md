@@ -116,3 +116,9 @@ Uses the `db` fixture from `conftest.py` (see [test_plaid.md](test_plaid.md#shar
 ## Not covered
 
 - **The Alembic migration** is checked by hand, not by pytest: on a scratch SQLite file, `alembic upgrade head`, `alembic check` (no drift from the models), `alembic downgrade -1`, then `upgrade head` again.
+
+## `test_last_pace_is_double`
+
+**What it does:** Checks that `budget_lines.last_pace` is mapped as `Double`.
+
+**Why it's there:** The migration creates the column as `sa.Double()`, but the model left the type to SQLAlchemy. That gives `Double` on 2.1 (installed here) but `Float` on 2.0, which `requirements.txt` (`sqlalchemy>=2`) still allows, and autogenerate or `alembic check` would then report drift. The type is now pinned, the same way `Liability.apr` pins `Float`. The test passes on 2.1 either way; it's a guard against an install that resolves 2.0. The review on #11 found it.
