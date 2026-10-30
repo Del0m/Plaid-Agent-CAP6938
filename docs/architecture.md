@@ -20,6 +20,8 @@ The novel part is the **dynamic budget agent**: a scheduled, stateful loop that 
 | Multi-step tool use | LangGraph nodes call tools (sync, query spend, search KB, create alert) |
 | Adaptive decisions | LLM classifies the cause of an overspend and picks an action; budget is re-fit each period |
 
+The same daily run also looks past the budget (section 6a). It finds **recurring charges** and flags new subscriptions, price increases and income changes. It **forecasts cash flow** to the next paycheck and warns before the checking balance drops below a buffer. It **plans debt payoff** (avalanche vs snowball, plus what extra monthly payments would change) and proposes extra payments when the forecast shows a surplus. Each of these follows the budget agent's pattern: deterministic code computes, the LLM explains and picks an action, and the user approves anything that touches money.
+
 ### Non-goals (for now)
 - Real money movement (stretch goal only, section 11).
 - Multi-tenant production hardening. One instance, a handful of test users.
@@ -56,7 +58,7 @@ java -jar plantuml.jar -tsvg docs/diagrams/*.puml
 | Frontend | **Next.js (React, TypeScript)** + Tailwind + Recharts | Plaid ships `react-plaid-link`; Recharts covers balance and budget-pace charts | Vite + React, SvelteKit |
 | Backend API | **FastAPI (Python 3.12)** (decided) | LangGraph, ChromaDB and the Plaid Python SDK are all Python, so one language for backend and agents | Node/Express (then agents become a separate service) |
 | Agents | **LangGraph** | Explicit state graphs, checkpointing, `interrupt()` for human approval | Plain tool-use loop, CrewAI |
-| LLM | **Local Llama via Ollama** (`langchain-ollama` `ChatOllama`), behind a single `llm.py` wrapper. Agent model: **`llama3.1:8b`** (`mistral` as a benchmark comparison). Judge model for evals: **`qwen2.5:14b`**. Runs on a MacBook Pro M5, 24 GB (70B models don't fit) | Financial data never leaves your machine; free to run thousands of eval calls; wrapper still lets you swap models for benchmarking | A hosted API (Claude, OpenAI) as a comparison baseline |
+| LLM | **Local Llama via Ollama** (`langchain-ollama` `ChatOllama`), behind a single `llm.py` wrapper. Chat agent model: **`qwen2.5:14b`** (since 2026-10-26; `llama3.1:8b` and `mistral` as benchmark comparisons). Judge model for evals: a different model from the agent, chosen in TPC-16. Runs on a MacBook Pro M5, 24 GB (70B models don't fit) | Financial data never leaves your machine; free to run thousands of eval calls; wrapper still lets you swap models for benchmarking | A hosted API (Claude, OpenAI) as a comparison baseline |
 | Embeddings | **`nomic-embed-text` via Ollama** (decided 2026-10-26), behind `get_embeddings()` in `llm.py` | 8192-token context fits ~500-token chunks; runs on the Ollama server the agent already uses; nothing leaves your machine; same model can score semantic similarity in evals | `all-MiniLM-L6-v2` (Chroma's default, but truncates at 256 word-pieces), `bge-small-en-v1.5` |
 | Vector store | **ChromaDB** (persistent client, local dir) | Required by the proposal; zero ops | pgvector |
 | App DB | **SQLite** in dev, **PostgreSQL** later, via **SQLAlchemy 2 + Alembic** | Start simple; migrations keep the schema honest | Supabase |
@@ -75,8 +77,11 @@ Refer to `system-design.png` while reading.
 ### 4.1 Frontend
 - **Dashboard:** net worth, account balances, debts sorted by APR, and a "budget pace" bar per category (green under 100%, amber 100-110%, red above).
 - **Plaid Link widget:** `react-plaid-link`. Gets a `link_token` from the backend, returns a `public_token`. Bank credentials go to Plaid only.
-- **Chat UI:** streams tokens over a WebSocket (or Server-Sent Events). Shows which tools the agent called, which is great for debugging and for your demo.
+- **Chat UI** (`/chat`): streams tokens over Server-Sent Events from `POST /api/chat`. Shows which tools the agent called (✓/✗ chips) and lists the guidance it was given as clickable sources.
 - **Goals & Alerts:** list of agent alerts with Accept / Dismiss buttons; accepted suggestions feed back into the agent's memory.
+- **Recurring charges:** subscriptions and bills the agent found, with frequency, typical amount, next expected date and a badge for new or price-increased ones.
+- **Cash-flow forecast:** projected checking balance per day to the next paycheck, as a line with a low/high band, the buffer as a reference line, and markers on the days bills land.
+- **Debt payoff:** avalanche vs snowball side by side (months to debt-free, total interest, payoff order), with an "extra per month" input that recomputes both.
 
 ### 4.2 Backend API (FastAPI)
 - **Auth & Session:** keep it simple: email + password with hashed passwords (or a single demo user). Every row in the DB is scoped by `user_id`.
@@ -84,19 +89,19 @@ Refer to `system-design.png` while reading.
 - **Plaid Service:** the only module that talks to Plaid. Wraps link token creation, token exchange, `/transactions/sync`, `/accounts/balance/get`, `/liabilities/get`, and webhook handling.
 - **Privacy Gateway:** the only module that builds LLM prompts from user data. Section 7.
 - **Local LLM (Ollama):** runs on the same machine as the backend at `http://localhost:11434`. No API key.
-- **Scheduler:** registers per-user jobs: daily sync + budget run; period close.
+- **Scheduler:** registers per-user jobs: daily sync + budget run (which also refreshes recurring streams and the cash-flow forecast, section 6a); period close.
 
 ### 4.3 Agent layer (LangGraph)
 Four graphs, sharing one tool set:
 
 | Graph | Trigger | Shape |
 |---|---|---|
-| **Chat Agent** | User message | ReAct loop: LLM ↔ tools until it answers |
-| **Budget Agent** | Daily schedule | Fixed pipeline with one LLM branch (diagnose + decide). See `budget-agent-loop.png` |
+| **Chat Agent** | User message | Retrieve guidance for the question, then a ReAct loop: LLM ↔ tools until it answers (at most 6 tool rounds, then one last call without tools) |
+| **Budget Agent** | Daily schedule | Fixed pipeline with one LLM branch (diagnose + decide). Also detects recurring charges and forecasts cash flow (section 6a). See `budget-agent-loop.png` |
 | **Period-Close Agent** | Period end | Compare budget vs actual, apply adjustments, open next period |
-| **Goal Agent** | User request or after period close | Gather debts/income/surplus → propose goals → user approves via `interrupt()` |
+| **Goal Agent** | User request or after period close | Gather debts, income and the forecast's surplus → run the debt-payoff planner → propose goals → user approves via `interrupt()` |
 
-**Deterministic Budget Engine:** plain Python functions for totals, pace, thresholds and budget fitting. The LLM never does arithmetic that matters. This is a core design rule: it makes the system testable and keeps the benchmarks meaningful.
+**Deterministic Budget Engine:** plain Python functions for totals, pace, thresholds and budget fitting, plus recurring-stream detection, the cash-flow forecast and the debt-payoff simulation (section 6a). The LLM never does arithmetic that matters. This is a core design rule: it makes the system testable and keeps the benchmarks meaningful.
 
 ### 4.4 Knowledge base (RAG)
 ChromaDB collection `fin_guidance`, filled by an offline ingestion script from curated public sources (section 8). The `search_kb` tool returns top-k chunks with source URLs so answers can cite them.
@@ -124,12 +129,19 @@ transactions     id, user_id, account_id, plaid_txn_id (unique), date, amount_ce
 budget_periods   id, user_id, start_date, end_date, status (open|closed)
 budget_lines     id, period_id, category, kind (fixed|flexible), limit_cents,
                  spent_cents, last_pace, source (init|adapted|user)
-alerts           id, user_id, period_id, category, severity, cause (one_time|seasonal|recurring),
-                 action (alert|suggest_cuts|adjust_next_budget), message, status
-                 (pending_user|accepted|dismissed), created_at
+alerts           id, user_id, period_id, kind (overspend|new_subscription|price_increase|
+                 income_change|low_balance|extra_payment), category, severity,
+                 cause (one_time|seasonal|recurring), action (alert|suggest_cuts|
+                 adjust_next_budget|suggest_cancel|move_from_savings|delay_spend|extra_payment),
+                 stream_id, message, status (pending_user|accepted|dismissed), created_at
 advice_log       id, user_id, run_id, category, advice_text, created_at, outcome
 goals            id, user_id, kind (debt_payoff|savings|emergency_fund), target_cents,
-                 target_date, monthly_cents, rationale, status
+                 target_date, monthly_cents, strategy (avalanche|snowball, debt_payoff only),
+                 rationale, status
+recurring_streams id, user_id, direction (in|out), merchant_key, merchant_name, category,
+                 frequency (weekly|biweekly|semi_monthly|monthly|annual), typical_cents,
+                 last_cents, amount_varies, first_date, last_date, next_date,
+                 status (active|stale), first_seen_run_id, updated_at
 agent_runs       id, user_id, graph, started_at, finished_at, status, summary_json
 ```
 
@@ -180,10 +192,10 @@ Use **structured output** (Pydantic models) for `diagnose` and `decide_action` s
 
 ### 6.3 Initial budget (from ~90 days of history)
 
-When creating the Plaid link token, set `transactions.days_requested` to at least 90.
+When creating the Plaid link token, set `transactions.days_requested` to at least 180: the budget uses the last 90 days, and recurring detection (section 6a.1) needs longer to catch monthly streams reliably.
 
 1. Drop transfers, income, and credit-card payments (they're not spending; they'd double count).
-2. Mark **fixed** categories (rent, utilities, loan payments, insurance, subscriptions flagged recurring by Plaid). Budget = the most recent amount.
+2. Mark **fixed** categories (rent, utilities, loan payments, insurance, and subscriptions found by the recurring detector in section 6a.1). Budget = the most recent amount.
 3. For **flexible** categories, compute monthly totals for each of the last 3 months. Budget = **median** × 1.05. Median, not mean, so one vacation doesn't inflate the budget.
 4. Store which transactions you treated as outliers so the agent can explain the budget.
 
@@ -207,6 +219,88 @@ At the end of each calendar month: for each line, compare `limit` vs actual. App
 
 ### 6.6 Human in the loop
 Anything that changes the user's money or their budget without being asked goes through LangGraph's `interrupt()` and becomes an alert with status `pending_user`. The agent proposes; the user disposes.
+
+---
+
+## 6a. Beyond budgeting: recurring charges, cash flow and debt payoff (Milestones 3-4)
+
+Three more jobs the agent does without being asked. They are built like the budget agent: a pure function in `budget_engine/` does the math and is unit-tested, the LLM only explains the result and picks an action, and every action that touches money or the budget becomes a `pending_user` alert (section 6.6). They feed each other:
+
+```
+recurring streams ──► cash-flow forecast ──► monthly surplus ──► debt-payoff planner
+       │                     │                                        │
+       └── new / changed     └── low-balance warning                  └── extra-payment proposal
+```
+
+### 6a.1 Recurring-charge detection
+
+**Detector** (`budget_engine/recurring.py`), run over our own `transactions` table:
+1. Take posted, non-removed transactions from the last 180 days. Group them by direction (money out or in) and a normalized merchant key: lowercased, with digits and punctuation removed, so `NETFLIX.COM 8443` and `Netflix.com 1123` match.
+2. A group is a stream when it has at least 3 transactions whose gaps cluster around 7, 14, 15 (semi-monthly), 30 or 365 days. The median gap must fall within ±3 days of the target, or ±5 for monthly, because bills shift around weekends and short months.
+3. If every amount is within 10% of the median, the stream is **fixed** and `typical_cents` is that median. Otherwise it's marked `amount_varies` (utilities, for example) and `typical_cents` is the median of the last 3 amounts.
+4. `next_date = last_date + median gap`. A stream that misses two expected dates becomes `stale`.
+
+**Why our own detector instead of Plaid's `/transactions/recurring/get`:** the synthetic eval users are loaded straight into the DB and never touch Plaid (section 10.1). The detector has to work on our table for the benchmarks to mean anything. A pure function is also easy to unit test, and Plaid's recurring endpoint is a separately priced add-on outside Sandbox. In Sandbox, compare our streams with Plaid's as a sanity check and report the agreement.
+
+**What the daily run does with them:** it upserts streams into `recurring_streams` and compares them with the last run.
+
+| Change | Rule | Alert `kind` |
+|---|---|---|
+| New outflow stream | First detected in this run | `new_subscription` |
+| Price increase | Fixed stream whose `last_cents` is at least 5% and $1 above `typical_cents` | `price_increase` |
+| Income change | An inflow stream (paycheck) that went stale, or whose last amount is 10% or more below typical | `income_change` |
+
+The LLM (inside `decide_action`, section 6a.4) writes the message and picks `alert` or `suggest_cancel`. The app can't cancel a subscription itself. Accepting `suggest_cancel` lowers next period's budget line for that category and stops future alerts on the stream. Recurring streams also help `diagnose`: an overspend that comes from a stream first seen this period has cause `recurring`.
+
+**Privacy:** the gateway gets a new purpose, `recurring`, that sends the scrubbed merchant name, category, frequency, amounts and dates. Inflow descriptions often contain an employer's or a person's name, so inflow streams go out as category and amount only (`"INCOME, biweekly, $1,850"`).
+
+### 6a.2 Cash-flow forecast
+
+**Forecast** (`budget_engine/forecast.py`), a pure function from a snapshot of the DB to a list of days:
+- **Start:** the summed `available_balance_cents` of depository checking accounts, falling back to `current_balance_cents`.
+- **Scheduled events:** active recurring streams on their `next_date` (repeated across the horizon), plus each credit card's `min_payment_cents` on its `next_due_date` if no outflow stream already covers that card's payment.
+- **Everyday spending:** the daily total of money out that isn't a recurring stream, over the last 90 days. The expected path uses the median day, the low path the 75th-percentile day and the high path the 25th.
+- **Horizon:** through the next paycheck, and at least 30 days.
+
+**When it acts:** if the *low* path dips below the buffer within 14 days, the run raises a `low_balance` flag with the date, the shortfall and the events on that date. The buffer is `users.prefs_json.low_balance_buffer_cents`, default $100. The LLM names the bill that causes the dip and picks one of these actions:
+- `move_from_savings`: amount = shortfall + buffer, only if a savings account can cover it. It is a proposal only; nothing moves (section 11).
+- `delay_spend`: names flexible categories that are ahead of pace (section 6.4) and how much to hold back.
+- `alert`: warns without suggesting anything.
+
+**Surplus:** expected balance at the next paycheck, minus the buffer, minus scheduled events before the paycheck after it. Scaled to a month, this is `monthly_surplus_cents`, the figure the Goal Agent and the debt planner use. It replaces M4's separate surplus calculation.
+
+**Limits, stated in the UI:** with irregular income there's no inflow stream, so the forecast assumes no income and says so. The answer is always shown as a range, never a single number.
+
+### 6a.3 Debt-payoff planner
+
+**Simulation** (`budget_engine/payoff.py`): `simulate(debts, extra_monthly_cents, strategy) -> Plan`, month by month.
+1. Interest each month = balance × APR / 12. Cards really compound daily on the average daily balance; monthly is close enough for planning, and the simplification is documented.
+2. Pay every debt's minimum, then put the extra on the target: highest APR for **avalanche**, smallest balance for **snowball**. When a debt is paid off, its minimum rolls into the extra (that's what makes both methods snowball).
+3. Hold minimums at Plaid's current figure. Real card minimums shrink as the balance drops, so this is the conservative choice; say so in the output.
+4. Stop when every balance is 0 or after 600 months. If a debt's payment never covers its interest, the plan returns `never` and names that debt.
+5. Debts with no APR are left out and listed. Mortgages are left out unless `include_mortgage=True`.
+
+The output gives each strategy's months to debt-free, total interest, and payoff order with dates, plus the difference an extra amount makes ("+$200/mo: 14 months sooner, $1,930 less interest").
+
+**Where it's used:**
+- **Chat:** a `plan_debt_payoff(extra_monthly, strategy)` tool, going through the gateway with a new `debt_plan` purpose. It returns computed results only, with names scrubbed, so the model never does the amortization itself.
+- **Goal Agent (M4):** proposes a `debt_payoff` goal whose monthly amount fits within part of `monthly_surplus_cents`, with the strategy chosen and explained. The `cfpb-reduce-debt` KB page covers both methods.
+- **Daily run:** if a debt-payoff goal is accepted and the forecast shows more surplus than the goal assumed, propose an `extra_payment` alert. It is a proposal only.
+
+**Benchmark value:** every question has an exact answer, so the eval can check the agent's numbers by rule (months match, interest within $1) instead of with a judge.
+
+### 6a.4 Wiring into the daily run
+
+The budget graph (section 6.2) gets two deterministic nodes after `update_totals`:
+
+| Node | LLM? | Does |
+|---|---|---|
+| `detect_recurring` | no | Run the detector, upsert `recurring_streams`, emit stream-change flags |
+| `forecast_cash` | no | Run the forecast, emit a `low_balance` flag and store `monthly_surplus_cents` in `agent_runs.summary_json` |
+
+`BudgetState` gains `streams`, `stream_changes`, `forecast` and `low_balance`. `decide_action` handles every flag kind with one structured-output call per flag, so the LLM call count only grows with the number of flags. It still checks `advice_log` so it doesn't repeat itself. `budget-agent-loop.puml` needs both new nodes.
+
+The chat agent gets three tools: `get_recurring`, `get_cash_forecast` and `plan_debt_payoff`, for 7 in total. That's still small enough for `qwen2.5:14b`; the eval checks tool choice for each.
 
 ---
 
@@ -242,7 +336,7 @@ Because the LLM runs locally (Ollama), prompts never leave your machine, which r
 
 **Ingestion** (`scripts/ingest_kb.py`, code in `app/rag/`): split at markdown headings, then pack paragraphs into ~500-token chunks (375 words) with ~50-token overlap (38 words), never crossing a section. Embed each chunk as `search_document: <title> - <section>\n\n<text>`, the task prefix nomic-embed-text expects, and rebuild the Chroma collection `fin_guidance` (cosine) from scratch each run, with metadata `{source_url, title, section, topic, fetched_at, chunk_index}`. Our code computes every vector; Chroma never runs its own embedding model.
 
-**Retrieval** (`search_kb` tool): embed the query as `search_query: <query>`, take the top 4, and return `{"purpose": "kb", "results": [{title, source_url, section, text}]}` with no similarity scores. The chat agent should cite the `source_url` in answers. `scripts/search_kb.py "<query>"` prints the same results for checking by hand.
+**Retrieval** (`search_kb` tool): embed the query as `search_query: <query>`, take the top 4, and return `{"purpose": "kb", "results": [{title, source_url, section, text}]}` with no similarity scores. The chat graph also runs this search itself on every question (the `retrieve` node) and puts the results in the system prompt as guidance; the app, not the model, lists their URLs as the answer's sources, because in live runs both local models skipped `search_kb` and invented citations. `scripts/search_kb.py "<query>"` prints the same results for checking by hand.
 
 Note on vocabulary: the proposal says "knowledge graph." What's described (LangGraph + ChromaDB, retrieve guidance) is a **vector-store RAG** plus an **agent graph**. That's fine; just use the precise terms in the report. A real knowledge graph (entities + relations) would be an optional extension.
 
@@ -261,7 +355,11 @@ GET  /budget/current            -> period + lines
 POST /budget/lines/{id}         (user override)
 GET  /alerts ; POST /alerts/{id}/accept | /dismiss
 GET  /goals ; POST /goals/generate ; POST /goals/{id}/accept
-WS   /chat                      streaming chat with the Chat Agent
+GET  /recurring                 -> active and stale streams, newest changes first
+GET  /forecast?days=            -> daily expected/low/high balance, scheduled events, buffer, monthly surplus
+POST /debt-plan                 { extra_monthly_cents, include_mortgage } -> avalanche and snowball plans
+POST /chat                      { thread_id, message } -> text/event-stream: sources, tool_call, tool_result, token, done | error
+GET  /chat/{thread_id}          -> the conversation so far, grouped into turns (tools and sources per answer)
 POST /admin/run/{graph}?user_id (dev only: trigger an agent run manually)
 POST /admin/sandbox/advance     (dev only: inject sandbox transactions, see 12)
 ```
@@ -288,10 +386,14 @@ Build the harness **early** (alongside Milestone 2), even with only two scenario
 | Time-to-flag | Days between a scenario's overspend crossing 10% and the alert being created | ≤ 1 run |
 | Budget improvement | MAPE per period over 3+ simulated periods; should trend down | trend |
 | False alarm rate | Alerts on scenarios with no real overspend | low |
+| Recurring detection | Precision and recall of detected streams against the ones planted in each fixture (match on merchant + frequency); in Sandbox, agreement with Plaid's `/transactions/recurring/get` | report both |
+| Forecast error | Replay a fixture: forecast from day *d*, compare with the actual balance on *d*+7 and *d*+14 (MAE) and how often the actual falls inside the low/high band | MAE ↓, band coverage ≈ 50% |
+| Overdraft warning lead time | Days between the `low_balance` alert and the planted dip | ≥ 3 days |
+| Debt-plan exactness | Agent's months-to-debt-free and total interest vs `payoff.py` run directly, by rule (months equal, interest within $1) | 100% |
 
 ### 10.3 Tips
 - Fix the LLM `temperature` (e.g. 0) during evals and run each scenario 3 times; report mean and spread.
-- Don't use the same model as both agent and judge if you can avoid it, or at least report that you did. The agent is `llama3.1:8b` and the judge is `qwen2.5:14b`, so a different model family grades the answers.
+- Don't use the same model as both agent and judge if you can avoid it, or at least report that you did. The chat agent is now `qwen2.5:14b`, the model first planned as judge, so TPC-16 must pick a different judge (e.g. `llama3.1:8b` or `mistral`) and report the choice.
 - Track latency too: a local model's speed per agent run is a real result worth reporting.
 - Save every run's outputs as JSON in `eval/results/<date>/` so you can chart progress in the final report.
 
@@ -327,7 +429,8 @@ plaid-agent/
 │   └── diagrams/*.puml
 ├── frontend/                    # Next.js
 │   ├── app/                     # routes: /, /dashboard, /chat, /goals
-│   ├── components/              # PlaidLinkButton, BudgetPaceBar, ChatPanel, AlertCard
+│   ├── components/              # PlaidLinkButton, BudgetPaceBar, ChatPanel, AlertCard,
+│   │                            # RecurringList, ForecastChart, DebtPlanCompare
 │   └── lib/api.ts
 ├── backend/
 │   ├── pyproject.toml
@@ -337,10 +440,12 @@ plaid-agent/
 │       ├── main.py              # FastAPI app, routers, scheduler start
 │       ├── config.py
 │       ├── db/                  # models.py, session.py
-│       ├── api/                 # auth.py, plaid.py, dashboard.py, budget.py, chat.py, admin.py
+│       ├── api/                 # auth.py, plaid.py, dashboard.py, budget.py, chat.py, admin.py,
+│       │                        # insights.py (recurring, forecast, debt-plan)
 │       ├── plaid_service/       # client.py, sync.py, webhooks.py
 │       ├── privacy/             # gateway.py, scrub.py
-│       ├── budget_engine/       # fit.py, pace.py, close.py   (pure functions, unit-tested)
+│       ├── budget_engine/       # fit.py, pace.py, close.py, recurring.py, forecast.py, payoff.py
+│       │                        # (pure functions, unit-tested)
 │       ├── agents/
 │       │   ├── llm.py           # model wrapper
 │       │   ├── tools.py
@@ -373,8 +478,8 @@ Assignment due **November 9, 2026**; everything is scheduled to finish by **Nove
 |---|---|---|
 | M1 Dashboard + Plaid linking | TPC-2 (stories TPC-1, 8-11) | Oct 5 - Oct 11 |
 | M2 Chat agent | TPC-3 (TPC-12 to 16) | Oct 12 - Oct 18 |
-| M3 Autonomous budget agent | TPC-4 (TPC-17 to 22) | Oct 19 - Oct 28 |
-| M4 Goal generation | TPC-5 (TPC-23 to 25) | Oct 29 - Nov 1 |
+| M3 Autonomous budget agent | TPC-4 (TPC-17 to 22, TPC-31, TPC-33) | Oct 19 - Oct 28; section 6a additions to Nov 1 |
+| M4 Goal generation | TPC-5 (TPC-23 to 25, TPC-32) | Oct 29 - Nov 1 |
 | M5 Benchmarking | TPC-6 (TPC-26 to 28) | Nov 2 - Nov 5 |
 | Writeup explaining these docs | TPC-7 (TPC-29, 30) | Nov 4 - Nov 7 |
 
@@ -392,7 +497,7 @@ Assignment due **November 9, 2026**; everything is scheduled to finish by **Nove
 1. `llm.py` wrapper around `ChatOllama`; first check that your Llama model returns tool calls correctly with one toy tool. Then Privacy Gateway v1 (allowlist + pseudonym).
 2. Tools: `get_accounts`, `get_debts`, `get_spending(category, from, to)`, `search_kb`.
 3. KB ingestion with 10-20 source docs.
-4. Chat graph (ReAct) + WebSocket streaming.
+4. Chat graph (retrieve + ReAct) + SSE streaming.
 5. Eval harness skeleton with 5 golden Q&A scenarios.
 - **Done when:** "Which debt should I pay first?" names the highest-APR card with the right numbers and cites a source.
 - **Learn:** tool calling (and its failure modes on small local models), RAG, prompt minimization, LLM-as-judge.
@@ -404,13 +509,16 @@ Assignment due **November 9, 2026**; everything is scheduled to finish by **Nove
 4. Alerts UI with accept/dismiss; `advice_log` read back into `decide_action`.
 5. Scheduler + `/admin/sandbox/advance` to simulate days.
 6. Period-Close graph.
-- **Done when:** simulate a month on a synthetic user with a planted overspend; the alert fires within one run of crossing 10%, with the right cause, and next month's budget adapts.
+7. Recurring-charge detection: `recurring.py`, `recurring_streams`, the `detect_recurring` node, new-subscription / price-increase / income-change alerts (section 6a.1, TPC-33).
+8. Cash-flow forecast: `forecast.py`, the `forecast_cash` node, low-balance alerts, `monthly_surplus_cents` (section 6a.2, TPC-31).
+- **Done when:** simulate a month on a synthetic user with a planted overspend; the alert fires within one run of crossing 10%, with the right cause, and next month's budget adapts. On a user with planted streams, every stream is found and a price increase is flagged on the next run. A planted pre-payday dip is warned about at least 3 days ahead.
 - **Learn:** stateful graphs, checkpointing, scheduling, human-in-the-loop, separating deterministic logic from LLM judgment.
 
 ### M4. Goal generation
-1. Goal graph: compute monthly surplus deterministically, then LLM proposes 1-3 goals within the surplus and the user's stated preferences (`users.prefs_json`, e.g. "don't touch my gym budget").
-2. Validate: goals must be affordable from surplus and dated; reject and retry otherwise.
-3. `interrupt()` for acceptance; accepted goals become budget lines (e.g. "Debt payoff: $300/mo").
+1. Goal graph: take `monthly_surplus_cents` from the cash-flow forecast (section 6a.2), then LLM proposes 1-3 goals within the surplus and the user's stated preferences (`users.prefs_json`, e.g. "don't touch my gym budget").
+2. Debt-payoff planner: `payoff.py`, `POST /debt-plan`, the `plan_debt_payoff` chat tool; `debt_payoff` goals come from it with a chosen strategy (section 6a.3, TPC-32).
+3. Validate: goals must be affordable from surplus and dated; reject and retry otherwise.
+4. `interrupt()` for acceptance; accepted goals become budget lines (e.g. "Debt payoff: $300/mo").
 - **Learn:** constrained generation, validate-and-retry loops.
 
 ### M5. Benchmarking
@@ -428,7 +536,10 @@ Grow scenarios to ~30-50, run the full metric table, chart results, and write up
 | Sandbox data too thin to test the loop | Synthetic fixtures with known ground truth |
 | Over-alerting annoys users | `days_elapsed` guard, dedupe via `advice_log`, false-alarm metric |
 | Local 8B model fumbles tool calls or JSON | Structured output with Pydantic + retry on parse failure; keep tool count small per graph; test a larger model if needed |
-| Scope creep | Stretch goal stays last; M3 is the core novelty, protect its time |
+| Scope creep | Stretch goal stays last; M3 is the core novelty, protect its time. Section 6a's order if time runs short: debt planner, then recurring detection, then the forecast |
+| Forecast looks precise but income is irregular | Always show the low/high band; with no inflow stream, assume no income and say so; the band-coverage metric checks the band is honest |
+| Recurring detector misses or invents streams | Needs 3+ occurrences and a tight gap/amount match; precision and recall on planted streams; compare with Plaid's endpoint in Sandbox |
+| Debt plan treated as exact | Output names its simplifications (monthly interest, fixed minimums); "not financial advice" disclaimer |
 
 All initial open questions were decided on 2026-10-04 (see the decision log). Add new ones here as they come up.
 
@@ -457,6 +568,15 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-26 | KB sources fetched by `scripts/fetch_kb.py` from `kb/sources.json` and committed as markdown, except copyrighted pages (git-ignored `kb/sources/local/`) | Reproducible and offline-testable; the committed text is exactly what gets cited; we don't redistribute pages we have no right to |
 | 2026-10-26 | Every ingest drops and rebuilds the `fin_guidance` collection | With ~16 documents it takes seconds, and it can't leave stale or duplicate chunks behind |
 | 2026-10-26 | `search_kb` does not go through the Privacy Gateway | Its results are public text with no user data, and the query only reaches the local embedding model |
+| 2026-10-26 | The venv is rebuilt on Python 3.12 (was 3.9 by accident) | Matches section 3; LangGraph 1.x needs 3.10+; removes the LibreSSL warning. The re-resolve moved langchain-core to 1.x and trafilatura to 2.3 with no code changes |
+| 2026-10-26 | Chat streams as SSE from `POST /chat` through the Next.js `/api` rewrite, not a WebSocket | Next rewrites don't forward WebSocket upgrades; a check showed 5 events 200 ms apart arrive 0.87 s apart through the proxy, so it doesn't buffer. The phone demo and same-origin decision still hold |
+| 2026-10-26 | Hand-built LangGraph chat graph (`retrieve → agent ⇄ tools`), cap of 6 tool rounds per question, then one call without tools | Tool errors go through `_run_tool`, so raw exception text never reaches the model (the prebuilt `ToolNode` forwards it); the cap still gives the user an answer |
+| 2026-10-26 | The app retrieves guidance for every question and lists the sources itself; the model is told never to write URLs. Chat model switched to `qwen2.5:14b` | Live done-when was 0/3 when the model had to call `search_kb`: neither `llama3.1:8b` nor `qwen2.5:14b` called it next to `get_debts`, and both invented citations (NerdWallet, made-up CFPB URLs). With app-side retrieval it's 3/3 on qwen. qwen was the planned judge, so TPC-16 needs another |
+| 2026-10-26 | One chat reply in flight per user: a second request gets `409` | Each turn holds the local model for seconds; a second tab or a refresh loop would stack runs. The lock is in-process, so the app runs one uvicorn worker |
+| 2026-10-26 | Frontend unit tests with Vitest + React Testing Library + jsdom (`npm test`), set up per Next 16's bundled guide | The chat page has real logic (stream parsing, event folding, storage fallback); a test runner caught a history race on day one |
+| 2026-10-27 | Add recurring-charge detection, a cash-flow forecast and a debt-payoff planner (section 6a) to the daily agent and the Goal Agent | The project's agentic scope should cover the user's whole financial picture, not just budgets; all three reuse the budget agent's pattern (pure function + LLM explanation + `pending_user` alerts) and give exact or measurable benchmark answers |
+| 2026-10-27 | Recurring streams come from our own detector over `transactions`; Plaid's `/transactions/recurring/get` is only a Sandbox cross-check | Synthetic eval users never touch Plaid; a pure function is unit-testable; Plaid's endpoint is a paid add-on outside Sandbox |
+| 2026-10-27 | `days_requested` raised from 90 to 180 | Monthly streams need several occurrences to be detected reliably |
 | | | |
 
 ---

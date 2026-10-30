@@ -21,11 +21,9 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dev.db")
 
 # local LLM (architecture section 3); agents/llm.py is the only reader
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 # 0 keeps eval runs repeatable; chat can pass its own temperature
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE") or "0")
-LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX") or "8192")
-LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS") or "300")
 
 # every prompt the privacy gateway builds is appended here (git-ignored)
 # `or`, not a getenv default: .env.example leaves it blank, and Path("") would be the cwd
@@ -37,3 +35,11 @@ PROMPT_AUDIT_MAX_BYTES = int(os.getenv("PROMPT_AUDIT_MAX_BYTES") or str(8 * 1024
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 # knowledge base root: sources.json, sources/ (committed), sources/local/ and chroma/ (git-ignored)
 KB_DIR = Path(os.getenv("KB_DIR") or Path(__file__).parent.parent.parent / "kb")
+# context window for the chat model; ollama's smaller default would silently cut long chats (search_kb adds ~2k tokens)
+LLM_NUM_CTX = int(os.getenv("LLM_NUM_CTX") or "8192")
+# langgraph checkpointer file: chat threads survive a backend restart (git-ignored by *.db)
+CHAT_CHECKPOINT_PATH = Path(os.getenv("CHAT_CHECKPOINT_PATH") or Path(__file__).parent.parent / "data" / "checkpoints.db")
+# cap on tokens per model reply: a repetition loop would otherwise run (and hold the user's chat lock) forever
+LLM_NUM_PREDICT = int(os.getenv("LLM_NUM_PREDICT") or "1024")
+# seconds the ollama client waits on a response; a cold 14b model on a busy machine can take minutes
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS") or "300")

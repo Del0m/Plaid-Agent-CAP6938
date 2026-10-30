@@ -6,3 +6,4 @@ __pycache__/
 logs/
 kb/chroma/
 kb/sources/local/
+backend/data/

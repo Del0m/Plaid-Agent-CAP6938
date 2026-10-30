@@ -8,7 +8,7 @@ First time only:
 
 ```bash
 cp .env.example .env                 # fill in PLAID_CLIENT_ID, PLAID_SECRET, FERNET_KEY
-python3 -m venv venv && venv/bin/pip install -r backend/requirements.txt
+python3.12 -m venv venv && venv/bin/pip install -r backend/requirements.txt
 cd backend && ../venv/bin/alembic upgrade head && cd ..
 cd frontend && npm install && cd ..
 ```
@@ -42,6 +42,17 @@ ollama pull nomic-embed-text
 
 Run `fetch_kb.py --refresh` to update the saved pages (for example, when the IRS publishes new contribution limits), read the changed files, then ingest again. The sources are listed in `kb/sources.json`.
 
+## Chat
+
+`/chat` (linked from the dashboard) answers questions about your linked accounts and cites the public guidance it used. It needs Ollama running with both models pulled, and the knowledge base ingested (see above):
+
+```bash
+ollama pull qwen2.5:14b
+ollama pull nomic-embed-text
+```
+
+Answers stream in as they're written; the chips under each answer show which tools ran, and the links are the guidance the app retrieved. A conversation survives a refresh (one per tab); **New chat** starts a fresh one. One reply runs at a time per user, so run the API with a single uvicorn worker (the default).
+
 ## Demo on a phone
 
 Use **Plaid Sandbox data only** for this demo. The app has one unauthenticated dev user: anyone who can reach the LAN address or tunnel can read the dashboard and call its API. Use a trusted network, do not share the tunnel URL publicly, and stop the server/tunnel when the demo ends. Real accounts require authentication and webhook verification first.
@@ -60,7 +71,7 @@ Use **Plaid Sandbox data only** for this demo. The app has one unauthenticated d
 
 ```bash
 cd backend && ../venv/bin/python -m pytest
-cd frontend && npm run lint && npm run build
+cd frontend && npm test && npm run lint && npm run build
 ```
 
-Each backend test module is documented in [`docs/tests/`](docs/tests/).
+Live tests (real Ollama models, real knowledge base) run when those are available and are skipped otherwise. Every test file, backend and frontend, is documented in [`docs/tests/`](docs/tests/).

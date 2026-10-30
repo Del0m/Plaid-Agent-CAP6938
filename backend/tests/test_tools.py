@@ -1,18 +1,19 @@
 import json
 from datetime import date
 
-import httpx
 import pytest
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import ToolException
+from langgraph.checkpoint.memory import MemorySaver
 
 from app import config
-from app.agents.llm import call_with_tools
+from app.agents.chat_graph import build_chat_graph
 from app.agents.tools import PFC_CATEGORIES, make_tools
 from app.db.models import Account, Transaction
 from app.privacy import gateway as gw
 from app.privacy.gateway import PrivacyGateway
 from tests.factories import add_account, add_txn, add_user
+from tests.fakes import FakeKB, ollama_has
 
 TODAY = date(2026, 10, 21)
 
@@ -38,23 +39,6 @@ def seeded(db):
         add_account(s, other, "Their Secret Card", type_="credit", liability={"kind": "credit", "apr": 30.0})
         s.commit()
     return db
-
-
-# stands in for KnowledgeBase: returns one canned result and records each search
-class FakeKB:
-    RESULT = {"title": "How to reduce your debt", "section": "Paying down debt",
-              "source_url": "https://www.consumerfinance.gov/about-us/blog/how-reduce-your-debt/",
-              "text": "Pay the highest interest debt first."}
-
-    def __init__(self, chunks=1):
-        self.chunks, self.searches = chunks, []
-
-    def count(self):
-        return self.chunks
-
-    def search(self, query, k=4):
-        self.searches.append((query, k))
-        return [self.RESULT]
 
 
 @pytest.fixture
@@ -188,6 +172,12 @@ def test_every_call_is_audited(tools, tmp_path):
     assert [l["purpose"] for l in lines] == ["accounts", "debts", "spending"]
 
 
+# review on #9: the system prompt says never write URLs; the tool description must not say the opposite
+def test_search_kb_description_does_not_ask_for_urls(tools):
+    description = tools["search_kb"].description.lower()
+
+    assert "cite" not in description and "url" not in description
+
 def test_search_kb_output_shape(tools, kb):
     out = tools["search_kb"].invoke({"query": "which debt should I pay first"})
 
@@ -218,21 +208,16 @@ def test_search_kb_empty_kb(seeded, tmp_path):
     assert kb.searches == []
 
 
-def _ollama_has_model() -> bool:
-    try:
-        resp = httpx.get(f"{config.OLLAMA_BASE_URL}/api/tags", timeout=2)
-        return config.OLLAMA_MODEL in [m["name"] for m in resp.json()["models"]]
-    except Exception:
-        return False
-
-
 # the ticket's "learn" goal: can the local model pick the right tool from these schemas alone?
-@pytest.mark.skipif(not _ollama_has_model(), reason="needs ollama running with OLLAMA_MODEL pulled")
+@pytest.mark.skipif(not ollama_has(config.OLLAMA_MODEL), reason="needs ollama running with OLLAMA_MODEL pulled")
 def test_live_model_picks_get_debts(seeded, tmp_path):
     audit = tmp_path / "audit.jsonl"
     with seeded() as s:
         tools = make_tools(PrivacyGateway(s, "u-1", audit_path=audit), FakeKB())
-        answer = call_with_tools([HumanMessage("Which of my debts has the highest APR?")], tools)
+        graph = build_chat_graph(tools, checkpointer=MemorySaver())
+        graph.invoke({"messages": [HumanMessage("Which of my debts has the highest APR?")], "tool_rounds": 0},
+                     {"configurable": {"thread_id": "t1"}})
+        answer = graph.get_state({"configurable": {"thread_id": "t1"}}).values["messages"][-1]
 
     # no audit file means the model called no tool; fail on that, not on FileNotFoundError
     purposes = [json.loads(l)["purpose"] for l in audit.read_text().splitlines()] if audit.exists() else []

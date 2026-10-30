@@ -97,7 +97,7 @@ def make_tools(gateway: PrivacyGateway, kb: KnowledgeBase) -> list[BaseTool]:
             search_kb, name="search_kb",
             description="Search trusted public financial guidance (CFPB, IRS, SEC investor.gov, FDIC) for general "
                         "rules and strategies: retirement accounts, debt payoff methods, budgeting rules, savings "
-                        "and deposit insurance. Returns passages with source URLs; cite the source_url in your "
-                        "answer. Not for the user's own balances or spending.",
+                        "and deposit insurance. Returns titled passages; refer to a passage by its title, never by "
+                        "a link. Not for the user's own balances or spending.",
         ),
     ]

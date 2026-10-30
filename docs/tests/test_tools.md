@@ -21,7 +21,7 @@ Run them from `backend/`:
   - a Starbucks purchase (FOOD_AND_DRINK) and a Delta flight (TRAVEL).
 
   It also creates user `u-2`, who owns "Their Secret Card".
-- `FakeKB` stands in for `KnowledgeBase`. `count()` returns how many chunks it pretends to hold (1 by default), and `search(query, k)` records each call and returns one canned CFPB result. The `kb` fixture is one `FakeKB`.
+- `FakeKB` (`tests/fakes.py`, shared with the chat API tests) stands in for `KnowledgeBase`. `count()` returns how many chunks it pretends to hold (1 by default), and `search(query, k)` records each call and returns one canned CFPB result. The `kb` fixture is one `FakeKB`.
 - `tools` builds `u-1`'s tools the way a chat session will: `make_tools(PrivacyGateway(...), kb)`, with the audit log under `tmp_path`.
 
 ---
@@ -122,6 +122,12 @@ Run them from `backend/`:
 
 **Why it's there:** It shows that the tools reach data only through the gateway. A tool that queried the database directly would leave no audit line.
 
+## `test_search_kb_description_does_not_ask_for_urls`
+
+**What it does:** Checks that the `search_kb` description says neither "cite" nor "url".
+
+**Why it's there:** The description used to say "cite the source_url in your answer", which contradicts the system prompt's "never write URLs or name other websites" (spec amendment a1). When the model called `search_kb`, its schema told it to write raw, or invented, links. It now says to refer to a passage by its title. The review on #9 found it.
+
 ## `test_search_kb_output_shape`
 
 **What it does:** Searches once and checks that the output is exactly `{"purpose": "kb", "results": [...]}` holding the knowledge base's results, and that the knowledge base was asked for 4.
@@ -148,9 +154,9 @@ Run them from `backend/`:
 
 ## `test_live_model_picks_get_debts`
 
-**What it does:** Gives the real local model all four tools (the knowledge base is a `FakeKB`) and asks "Which of my debts has the highest APR?" without naming a tool. It checks that the audit log has a `debts` call and that the answer mentions the credit card. If the model calls no tool, there's no audit file, and the test treats that as "no calls" so it fails on the assertion instead of crashing with `FileNotFoundError`. It's skipped unless Ollama is running with `OLLAMA_MODEL` pulled.
+**What it does:** Runs the real chat graph (`build_chat_graph`, TPC-15) with all four tools (the knowledge base is a `FakeKB`) and asks "Which of my debts has the highest APR?" without naming a tool. It checks that the audit log has a `debts` call and that the answer mentions the credit card. If the model calls no tool, there's no audit file, and the test treats that as "no calls" so it fails on the assertion instead of crashing with `FileNotFoundError`. It's skipped unless Ollama is running with `OLLAMA_MODEL` pulled.
 
-**Why it's there:** It tests the ticket's "Learn" goal: can an 8B model choose the right tool from these names and descriptions alone? It passed 3 out of 3 runs on 2026-10-21 with `llama3.1:8b`. On 2026-10-26 it still passed with `search_kb` added as a fourth choice.
+**Why it's there:** It tests the ticket's "Learn" goal: can an 8B model choose the right tool from these names and descriptions alone? It passed 3 out of 3 runs on 2026-10-21 with `llama3.1:8b`. On 2026-10-26 it still passed with `search_kb` added as a fourth choice, and again after the default chat model became `qwen2.5:14b` (TPC-15).
 
 ---
 
