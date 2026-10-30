@@ -2,6 +2,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import ToolException, tool
 from langgraph.checkpoint.memory import MemorySaver
+from pydantic import BaseModel
 
 from app import config
 from app.agents.chat_graph import MAX_TOOL_ROUNDS, SYSTEM_PROMPT, build_chat_graph
@@ -27,7 +28,18 @@ def boom(name: str) -> int:
     raise RuntimeError("secret user data 4321")
 
 
-TOOLS = [get_lucky_number, bad, boom]
+class AccountRow(BaseModel):
+    balance: int
+
+
+@tool
+def strict(name: str) -> int:
+    """Builds a model from a database value, which can fail validation."""
+    AccountRow(balance="Jane Doe's Checking")
+    return 1
+
+
+TOOLS = [get_lucky_number, bad, boom, strict]
 CONFIG = {"configurable": {"thread_id": "t1"}}
 
 
@@ -93,6 +105,17 @@ def test_generic_exception_text_not_forwarded():
 
     assert model.seen[1][-1].content == "error: boom failed (RuntimeError)"
     assert not any("4321" in str(m.content) for call in model.seen for m in call)
+
+
+# a ValidationError raised inside a tool prints input_value, which can be user data from the db
+def test_validation_error_input_not_forwarded():
+    model = ScriptedChatModel(replies=[tool_call("strict", {"name": "x"}), AIMessage("ok")])
+
+    run(model)
+
+    sent = model.seen[1][-1].content
+    assert sent.startswith("error:")
+    assert "Jane" not in sent
 
 
 # ollama going away is not something to paper over with a fake answer
@@ -195,7 +218,33 @@ def test_sources_by_turn_keyed_by_question_id():
 
     values = graph.get_state(CONFIG).values
     questions = [m for m in values["messages"] if isinstance(m, HumanMessage)]
-    assert values["sources_by_turn"] == {questions[0].id: [GUIDE], questions[1].id: [other]}
+    slim = lambda g: [{k: g[k] for k in ("title", "section", "source_url")}]
+    assert values["sources_by_turn"] == {questions[0].id: slim(GUIDE), questions[1].id: slim(other)}
+
+
+# review on #9: the reset belongs to the graph, so a caller that doesn't pass tool_rounds still gets tools
+def test_tool_rounds_reset_without_the_caller():
+    saver = MemorySaver()
+    calls = [tool_call("get_lucky_number", {"name": "A"}, id=f"c{i}") for i in range(MAX_TOOL_ROUNDS)]
+    model = ScriptedChatModel(replies=calls + [AIMessage("turn one"), AIMessage("turn two")])
+    graph = run(model, saver=saver)
+
+    graph.invoke({"messages": [HumanMessage("again")]}, CONFIG)
+
+    assert model.tools_seen[-1] is not None
+
+
+# review on #9: a turn cut off mid-tool leaves calls with no results; the model must never see them unanswered
+def test_dangling_tool_calls_answered_before_the_model_sees_them():
+    model = ScriptedChatModel(replies=[AIMessage("answer")])
+    cut_off = tool_call("get_lucky_number", {"name": "Ada"}, id="lost")
+
+    run(model, question="second question", messages=[HumanMessage("first"), cut_off, HumanMessage("second question")])
+
+    sent = model.seen[0]
+    i = next(n for n, m in enumerate(sent) if getattr(m, "tool_calls", None))
+    assert isinstance(sent[i + 1], ToolMessage) and sent[i + 1].tool_call_id == "lost"
+    assert sent[i + 1].content.startswith("error:")
 
 
 # a real tool call on the local model, end to end through the graph

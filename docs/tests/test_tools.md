@@ -13,7 +13,7 @@ Run them from `backend/`:
 
 ## Shared setup
 
-- `add_user`, `add_account` and `add_txn` come from `tests/factories.py`, which is shared with `test_gateway.py`.
+- `add_user`, `add_account` and `add_txn` come from `tests/factories.py`, which is shared with `test_gateway.py`. `add_txn` numbers `plaid_txn_id` from one counter for the whole test run.
 - `fixed_today` (autouse) pins the gateway's "today" to 2026-10-21.
 - `seeded` creates user `u-1` with:
   - a checking account;
@@ -70,7 +70,7 @@ Run them from `backend/`:
 
 ## `test_unknown_category_lists_valid_ones`
 
-**What it does:** Asks for category "groceries" and expects a `ToolException` that repeats "groceries" and lists the valid names, including FOOD_AND_DRINK.
+**What it does:** Asks for category "groceries" and expects a `ToolException` that repeats "groceries" and lists the valid names, including FOOD_AND_DRINK and UNCATEGORIZED.
 
 **Why it's there:** Without this check, an unknown word would reach the gateway and come back as a $0 total. The model would report that as "you spent nothing on groceries". An error that lists the real categories lets it retry with FOOD_AND_DRINK. `call_with_tools` forwards `ToolException` text to the model on purpose (see `test_llm.md`).
 
@@ -92,11 +92,41 @@ Run them from `backend/`:
 
 **Why it's there:** The model can only use a category name it has been shown. The list lives in the description, and the architecture's decision log says these Plaid categories are the budget categories.
 
+## `test_future_start_alone_rejected`
+
+**What it does:** With today pinned to 2026-10-21, a `start_date` of 2026-11-01 and no `end_date` should raise the same "before" `ToolException` as an explicitly reversed range.
+
+**Why it's there:** The reversed-range check used to run only when both dates were given. With only a start, the gateway fills in today as the end, so a future start was still reversed and came back as no spending. The review on #7 found it. The tool now compares against today when `end_date` is left out.
+
+## `test_empty_string_args_mean_default`
+
+**What it does:** Calls `get_spending` with `category=""`, `start_date=" "` and `end_date=""`, and expects the same default totals as a call with no arguments.
+
+**Why it's there:** Small models often send an empty string for an optional argument they mean to leave out. Each of those used to raise ("start_date must be YYYY-MM-DD, got ''" or "unknown category ''"), which failed a plain "what did I spend?" and used up one of `call_with_tools`' steps. Blank arguments now count as missing.
+
+## `test_description_and_error_name_uncategorized`
+
+**What it does:** Checks that the unknown-category error and the tool description both name UNCATEGORIZED, and that the description says INCOME and TRANSFER_IN report money in.
+
+**Why it's there:** The totals can include UNCATEGORIZED, and the tool accepts it, but nothing told the model it could ask for it. INCOME and TRANSFER_IN were offered but could never return data until the gateway learned to read inflows (TPC-12). The description now says those two report money in. Both points come from the review on #7.
+
+## `test_factory_txn_ids_unique_across_sessions`
+
+**What it does:** Adds one transaction in one session and another on the same account in a second session, and checks that both rows are stored.
+
+**Why it's there:** The factory's `plaid_txn_id` counter used to live in `s.info`, so it restarted at 0 in every session. A second session then reused `t-<account>-0` and hit the unique constraint. The counter is now module-level. This matters more now that the factory is shared.
+
 ## `test_every_call_is_audited`
 
 **What it does:** Calls all three tools and checks that the audit log has one line per call, with the purposes accounts, debts and spending.
 
 **Why it's there:** It shows that the tools reach data only through the gateway. A tool that queried the database directly would leave no audit line.
+
+## `test_search_kb_description_does_not_ask_for_urls`
+
+**What it does:** Checks that the `search_kb` description says neither "cite" nor "url".
+
+**Why it's there:** The description used to say "cite the source_url in your answer", which contradicts the system prompt's "never write URLs or name other websites" (spec amendment a1). When the model called `search_kb`, its schema told it to write raw, or invented, links. It now says to refer to a passage by its title. The review on #9 found it.
 
 ## `test_search_kb_output_shape`
 
@@ -124,7 +154,7 @@ Run them from `backend/`:
 
 ## `test_live_model_picks_get_debts`
 
-**What it does:** Runs the real chat graph (`build_chat_graph`, TPC-15) with all four tools (the knowledge base is a `FakeKB`) and asks "Which of my debts has the highest APR?" without naming a tool. It checks that the audit log has a `debts` call and that the answer mentions the credit card. It's skipped unless Ollama is running with `OLLAMA_MODEL` pulled.
+**What it does:** Runs the real chat graph (`build_chat_graph`, TPC-15) with all four tools (the knowledge base is a `FakeKB`) and asks "Which of my debts has the highest APR?" without naming a tool. It checks that the audit log has a `debts` call and that the answer mentions the credit card. If the model calls no tool, there's no audit file, and the test treats that as "no calls" so it fails on the assertion instead of crashing with `FileNotFoundError`. It's skipped unless Ollama is running with `OLLAMA_MODEL` pulled.
 
 **Why it's there:** It tests the ticket's "Learn" goal: can an 8B model choose the right tool from these names and descriptions alone? It passed 3 out of 3 runs on 2026-10-21 with `llama3.1:8b`. On 2026-10-26 it still passed with `search_kb` added as a fourth choice, and again after the default chat model became `qwen2.5:14b` (TPC-15).
 

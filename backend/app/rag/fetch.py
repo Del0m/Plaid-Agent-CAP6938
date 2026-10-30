@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from itertools import zip_longest
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -63,8 +64,8 @@ def _flatten_tables(html: str) -> str:
         if caption:
             lxml.html.etree.SubElement(div, "h2").text = _text(caption[0])
         for cells in body:
-            labeled = [f"{h}: {c}" if h else c for h, c in zip(headers[1:], cells[1:]) if c] if headers \
-                else cells[1:]
+            # a short header row (colspan) labels what it can; the remaining cells are kept unlabeled
+            labeled = [f"{h}: {c}" if h else c for h, c in zip_longest(headers[1:], cells[1:], fillvalue="") if c]
             line = f"{cells[0]} — {'; '.join(labeled)}" if labeled else cells[0]
             lxml.html.etree.SubElement(div, "p").text = line
         table.getparent().replace(table, div)
@@ -115,8 +116,10 @@ def fetch_all(kb_dir: Path, client: httpx.Client, refresh: bool = False,
             continue
         try:
             text = fetch_source(entry, client, today or date.today())
-        except (FetchError, httpx.HTTPError) as exc:
-            logger.warning("FAIL %s: %s", entry["slug"], exc)
+        # anything else (an extractor bug, a malformed entry) is one more failed source, not the end of the run
+        except Exception as exc:
+            logger.warning("FAIL %s: %s", entry["slug"], exc if isinstance(exc, (FetchError, httpx.HTTPError))
+                           else f"{type(exc).__name__}: {exc}")
             failed.append(entry["slug"])
             continue
         path.parent.mkdir(parents=True, exist_ok=True)

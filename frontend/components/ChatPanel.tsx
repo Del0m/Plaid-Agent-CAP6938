@@ -126,7 +126,8 @@ export default function ChatPanel() {
     let cancelled = false;
     getChatHistory(id)
       .then((history) => {
-        if (cancelled) return;
+        // New chat may have picked another thread while this was loading
+        if (cancelled || threadId.current !== id) return;
         // a message sent before history arrived wins; history only fills an empty conversation
         setTurns((current) => (current.length > 0 ? current : history.map((t) => ({ ...t, sources: t.sources ?? [] }))));
       })

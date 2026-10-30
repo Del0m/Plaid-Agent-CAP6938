@@ -58,7 +58,25 @@ Run them from `backend/`:
 
 **What it does:** Builds a 3-chunk knowledge base, then rebuilds with 40 chunks using an embedder that fails on its second batch. It checks that the rebuild raises and that the original 3 chunks are still there and searchable.
 
-**Why it's there:** `rebuild` used to drop the collection before embedding anything. If Ollama went away halfway through an ingest, chat would quietly answer from a partial knowledge base, for example only the first 32 CFPB chunks and never irs.gov. Now every vector is computed before the old collection is dropped.
+**Why it's there:** `rebuild` used to drop the collection before embedding anything. If Ollama went away halfway through an ingest, chat would quietly answer from a partial knowledge base, for example only the first 32 CFPB chunks and never irs.gov. Now every vector is computed before the old collection is dropped. See also `test_failed_add_keeps_previous_kb`.
+
+## `test_failed_add_keeps_previous_kb`
+
+**What it does:** Builds a 3-chunk knowledge base, then rebuilds with 40 chunks where the second batch holds a duplicate id, so Chroma refuses that add. It checks that the rebuild raises, that the original 3 chunks are still there and searchable, and that a later rebuild still succeeds.
+
+**Why it's there:** The previous fix only covered embedding failures: the old collection was still dropped before any `add`, so a failure while adding (a duplicate id, a bad metadata value, a killed process) left a half-filled knowledge base. The rebuild now fills a separate `fin_guidance_building` collection, then drops the old one and renames the new one into place. A leftover building collection from a failed run is dropped at the start of the next rebuild, which the last assertion checks. The review on #8 found it.
+
+## `test_chunk_index_is_per_document`
+
+**What it does:** Rebuilds with chunks `a-0`, `a-1` and `b-0`, reads the stored metadata, and checks that `chunk_index` is 0, 1 and 0.
+
+**Why it's there:** The stored index used to be the position across the whole ingest, so it disagreed with the chunk id. Anything that ordered or rebuilt a document from its chunks would have got it wrong.
+
+## `test_ingest_skips_a_bad_source`
+
+**What it does:** Ingests one good source and one with a blank title. It expects `(1, 1)` (one chunk from one source) and a warning that names `bad.md`.
+
+**Why it's there:** `parse_source` refuses a file that can't be cited, but the refusal raised through the whole ingest, so one bad page stopped every other source from being indexed. The bad file is now skipped with a warning, and `ingest` returns how many sources it actually used.
 
 ## `test_ingest_without_sources_raises`
 

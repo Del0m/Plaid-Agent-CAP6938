@@ -60,6 +60,12 @@ Run them from `backend/`:
 
 **Why it's there:** Any other exception's text can carry user data. SQLAlchemy errors print bound parameters, for example, and this path skips the privacy gateway. This is the TPC-12 rule, now enforced by the graph.
 
+## `test_validation_error_input_not_forwarded`
+
+**What it does:** The `strict` tool builds a pydantic model from a value that looks like database data ("Jane Doe's Checking") and fails validation. The test checks that the model gets an `error:` message that doesn't contain "Jane".
+
+**Why it's there:** A pydantic `ValidationError` prints `input_value=...`. When the error comes from a tool's own code building models from database rows, that value is user data, and `_run_tool` doesn't go through the privacy gateway. The review on #6 found that these errors were forwarded word for word. Now only a generic "check the tool's argument schema" message reaches the model. (This test started in `test_llm.py` on TPC-12 and moved here with the tool loop.)
+
 ## `test_model_error_propagates`
 
 **What it does:** Checks that a model call raising `ConnectionError` raises out of the graph.
@@ -77,6 +83,18 @@ Run them from `backend/`:
 **What it does:** Turn 1 uses 2 tool rounds. Turn 2 starts with `tool_rounds: 0`, and the test checks that its model call has tools bound again.
 
 **Why it's there:** The cap is per question. If the count carried over, a long conversation would eventually lose its tools for good.
+
+## `test_tool_rounds_reset_without_the_caller`
+
+**What it does:** Turn 1 uses all 6 tool rounds. Turn 2 is invoked with only its message, no `tool_rounds`, and the test checks that its model call has tools bound.
+
+**Why it's there:** The reset used to depend on every caller passing `tool_rounds: 0`, and the count is stored in the checkpoint. A caller that forgot (an eval harness, a later endpoint) inherited the old count and lost its tools, so the model answered balance questions without looking them up. The retrieve step now resets it. The review on #9 found it.
+
+## `test_dangling_tool_calls_answered_before_the_model_sees_them`
+
+**What it does:** Runs a turn whose history holds a tool call with no result, as a turn cut off mid-tool leaves it. It checks that the model is sent an `error:` ToolMessage for that call right after it.
+
+**Why it's there:** A closed tab or an Ollama timeout after a tool call leaves an unanswered call in the checkpoint, and every later turn was built on it. The stored history is left as it is (GET /chat shows the call as failed, which is true), but the model now gets a stand-in result for each unanswered call. The review on #9 found it.
 
 ## `test_memory_across_turns`
 
@@ -114,9 +132,9 @@ Run them from `backend/`:
 
 ## `test_sources_by_turn_keyed_by_question_id`
 
-**What it does:** Runs two turns with different results and checks that `sources_by_turn` maps each user message's id to that turn's sources.
+**What it does:** Runs two turns with different results and checks that `sources_by_turn` maps each user message's id to that turn's sources: title, section and URL only, without the passage text.
 
-**Why it's there:** `GET /chat/{id}` uses this to show each answer's own sources after a refresh. `sources` alone only holds the latest turn's.
+**Why it's there:** `GET /chat/{id}` uses this to show each answer's own sources after a refresh. `sources` alone only holds the latest turn's. History only needs the citation, and the checkpointer rewrites every channel on every step, so storing about four full passages per question grew long threads for nothing. The review on #9 found it.
 
 ## `test_live_tool_call_round_trip`
 

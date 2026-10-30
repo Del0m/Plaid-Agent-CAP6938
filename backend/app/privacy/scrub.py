@@ -9,12 +9,17 @@ EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 PHONE = re.compile(r"(?:\+1[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}")
 # 4+ digits: card and account numbers, masks, reference ids. "Route 66" and "7-Eleven" survive
 DIGITS = re.compile(r"\d{4,}")
-# "Zelle payment to Jane Doe" -> "Zelle payment to [person]": after a p2p service's to/from,
-# everything up to the next scrubbed token is the counterparty
-P2P = re.compile(r"\b(zelle|venmo|cash app|apple cash|paypal)\b(.*?\b(?:to|from)\s+)[^\[]*[^\[\s]", re.IGNORECASE)
-# "Jane Doe's Checking", "JANE & BOB'S JOINT", "José's": in the user's own account labels a
-# possessive is a person, so every word (any case, any script) before the 's goes
-POSSESSIVE = re.compile(r"(?:[^\W\d_]+(?:\s*&\s*|\s+))*[^\W\d_]+(?=['’][sS]\b)")
+# A payment label may omit to/from or use an asterisk. Consume the whole counterparty,
+# including text after a redacted email/number; retaining a surname would still leak it.
+P2P = re.compile(
+    r"\b(?P<service>zelle|venmo|cash\s*app|apple\s*cash|paypal)\b"
+    r"(?P<connector>\s+(?:payment\s+)?(?:to|from)\b\s*|[\s*:/-]+)(?P<person>.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
+REDACTIONS = re.compile(r"\[(?:email|phone|number)\]")
+# Account labels are user-provided: remove the whole prefix before the last possessive.
+# This covers James', THE JONES', Mary-Jane's, O'Brien's and joint/multiword names.
+POSSESSIVE = re.compile(r"^.+(?=['’][sS]\b|(?<=[sS])['’](?:\s|$))", re.DOTALL)
 
 
 def scrub_text(s: Optional[str]) -> Optional[str]:
@@ -27,7 +32,11 @@ def scrub_text(s: Optional[str]) -> Optional[str]:
 
 def scrub_merchant(s: Optional[str]) -> Optional[str]:
     s = scrub_text(s)
-    return P2P.sub(r"\1\2[person]", s) if s else s
+    def redact(match):
+        markers = REDACTIONS.findall(match["person"])
+        return match["service"] + match["connector"] + "[person]" + (
+            " " + " ".join(markers) if markers else "")
+    return P2P.sub(redact, s) if s else s
 
 
 def scrub_account_name(s: Optional[str]) -> Optional[str]:
