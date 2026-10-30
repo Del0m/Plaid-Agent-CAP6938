@@ -126,5 +126,23 @@ It checks that the row count didn't change and that at least one credit liabilit
 ## Not covered
 
 - **Webhook signature verification.** `/plaid/webhook` trusts the payload. Anyone who can reach the URL can trigger a sync (but can't read data or choose what's stored). Verifying the `Plaid-Verification` JWT is a TODO in `app/api/plaid.py`.
-- **Two syncs of one item at the same time** (webhook and manual sync together). Both would fetch the same pages. Whichever commits second hits the unique constraint on a newly inserted transaction and fails, and the next sync retries it. There's no test, because that requires real concurrency.
+- **Multiple API workers.** The per-item lock is in-process. The app must run one worker; a distributed lock is required before running several.
 - **`/accounts/balance/get` errors** go through the same `_plaid_failure` path as other routes and aren't tested separately.
+
+## `test_partial_link_sync_failure_stays_retryable_after_cursor_commit`
+
+**What it does:** Lets transaction sync commit its rows/cursor and balance refresh succeed, then makes liabilities fail. The linked item remains `sync_failed` and appears in the dashboard's retry list despite its non-null cursor. A successful retry clears the failure.
+
+**Why it's there:** The old cursor-only query hid failures after the transaction step and gave users no retry path.
+
+## `test_unexpected_retry_failure_rolls_back_and_returns_safe_error`
+
+**What it does:** Parametrized over runtime and payload errors. The fake sync flushes a cursor change, then raises an exception containing sensitive details. The endpoint rolls back that change, records the failure, and returns a generic 502 without the exception text.
+
+**Why it's there:** Manual retry must handle the same unexpected sync failures as first linking, without leaving a dirty session or leaking details.
+
+## `test_concurrent_syncs_serialize_and_reload_cursor`
+
+**What it does:** Uses two threads and sessions against a temporary file-backed SQLite DB. The second session loads the old cursor before the first sync commits. Both syncs finish successfully; the second fetch uses the newly committed cursor and exactly one transaction exists.
+
+**Why it's there:** A webhook and initial/manual sync can overlap. The shared lock must cover fetching and writes, and the waiting session must reload its cursor rather than replaying stale pages.

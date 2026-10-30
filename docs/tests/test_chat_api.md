@@ -119,7 +119,7 @@ Run them from `backend/`:
 
 **What it does:** Starts a turn on a background thread with the model held on a gate. While it's running, a second POST must get `409` with "A reply is already in progress." Once the first turn finishes, a POST must succeed.
 
-**Why it's there:** This is the per-user lock. Each turn holds the local model for seconds, and a second tab or a refresh loop would otherwise stack model runs.
+**Why it's there:** This is the per-user lock. Each turn holds the local model for seconds, and a second tab or a refresh loop would otherwise stack model runs. The endpoint checks the lock and the response body takes it (see `test_lock_not_held_when_body_never_starts`).
 
 ## `test_lock_released_after_error`
 
@@ -132,6 +132,18 @@ Run them from `backend/`:
 **What it does:** Calls the route directly, reads the first event (`sources`) from its body, then closes the body, which is what Starlette does when the browser goes away. It checks that the lock is freed within a few seconds and that the next POST succeeds.
 
 **Why it's there:** Closing a tab mid-answer is normal. Closing the body tells the turn's worker thread to stop; the worker cleans up and frees the lock on its own thread. If the lock leaked, chat would show "already in progress" until a restart.
+
+## `test_lock_not_held_when_body_never_starts`
+
+**What it does:** Calls the route directly and closes its body without reading anything, as Starlette does when the client disconnects before the response starts. It checks that the user's lock isn't held and that the next POST succeeds.
+
+**Why it's there:** The endpoint used to take the lock, and only the body's worker thread released it. A body that never started never made that thread, so the lock was held for good, and every later message got "A reply is already in progress." until a restart. The review on #9 found it. The endpoint now only checks the lock (for the 409), and the body takes it when it starts. Two requests racing past the check get the same message as an `error` event.
+
+## `test_empty_answer_after_tool_call_text`
+
+**What it does:** The model writes "Let me check your debts" next to a `get_debts` call, then gives an empty final answer. The last event must be the empty-answer error.
+
+**Why it's there:** Any streamed token used to count as an answer, including text written next to a tool call, which the client drops on `tool_call`. A turn with an empty final answer then ended with `done`, and the user saw a blank bubble. The flag is now reset when a tool call arrives. The review on #9 found it.
 
 ## `test_disconnect_does_not_block_event_loop`
 

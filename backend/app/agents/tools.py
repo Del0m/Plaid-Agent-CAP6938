@@ -3,6 +3,7 @@ import logging
 from datetime import date
 from typing import Optional
 from langchain_core.tools import BaseTool, StructuredTool, ToolException
+from ..privacy import gateway as gw
 from ..privacy.gateway import PrivacyGateway
 from ..rag.store import KnowledgeBase
 
@@ -25,6 +26,11 @@ SEARCH_K = 4
 MAX_QUERY_CHARS = 1000
 
 
+# small models send "" for an optional argument they mean to leave out
+def _blank(value: Optional[str]) -> Optional[str]:
+    return value.strip() or None if value is not None else None
+
+
 def _parse_date(name: str, value: Optional[str]) -> Optional[date]:
     if value is None:
         return None
@@ -44,15 +50,17 @@ def make_tools(gateway: PrivacyGateway, kb: KnowledgeBase) -> list[BaseTool]:
 
     def get_spending(category: Optional[str] = None, start_date: Optional[str] = None,
                      end_date: Optional[str] = None) -> str:
-        start, end = _parse_date("start_date", start_date), _parse_date("end_date", end_date)
-        if start and end and start > end:
-            raise ToolException("start_date must be on or before end_date")
+        start, end = _parse_date("start_date", _blank(start_date)), _parse_date("end_date", _blank(end_date))
+        # the gateway fills a missing end with today, so a future start alone is reversed too
+        if start and start > (end or gw._today()):
+            raise ToolException("start_date must be on or before end_date (today when end_date is left out)")
+        category = _blank(category)
         if category is not None:
             # an unknown word would come back as $0 spent, which reads as a real answer;
             # echo what the model sent so it recognizes its own mistake
-            if category.strip().upper() not in VALID_CATEGORIES:
-                raise ToolException(f"unknown category '{category}'; use one of: {', '.join(PFC_CATEGORIES)}")
-            category = category.strip().upper()
+            if category.upper() not in VALID_CATEGORIES:
+                raise ToolException(f"unknown category '{category}'; use one of: {', '.join(VALID_CATEGORIES)}")
+            category = category.upper()
         return gateway.build_context("spending", start=start, end=end, category=category)
 
     # skips the gateway: results are public guidance with no user data, and the query only
@@ -81,14 +89,15 @@ def make_tools(gateway: PrivacyGateway, kb: KnowledgeBase) -> list[BaseTool]:
         StructuredTool.from_function(
             get_spending, name="get_spending",
             description="Total spending in dollars by category. Optional: category (one of "
-                        f"{', '.join(PFC_CATEGORIES)}) to also list that category's transactions; "
+                        f"{', '.join(VALID_CATEGORIES)}) to also list that category's transactions "
+                        "(INCOME and TRANSFER_IN report money in); "
                         "start_date and end_date as YYYY-MM-DD (default: the last 30 days).",
         ),
         StructuredTool.from_function(
             search_kb, name="search_kb",
             description="Search trusted public financial guidance (CFPB, IRS, SEC investor.gov, FDIC) for general "
                         "rules and strategies: retirement accounts, debt payoff methods, budgeting rules, savings "
-                        "and deposit insurance. Returns passages with source URLs; cite the source_url in your "
-                        "answer. Not for the user's own balances or spending.",
+                        "and deposit insurance. Returns titled passages; refer to a passage by its title, never by "
+                        "a link. Not for the user's own balances or spending.",
         ),
     ]

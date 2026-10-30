@@ -31,9 +31,13 @@ def _merge(old: Optional[dict], new: Optional[dict]) -> dict:
 
 class ChatState(MessagesState):
     pseudonym: str      # the privacy gateway's pseudonym for this thread, reused every turn
-    tool_rounds: int    # tool rounds in the current turn; the caller resets it to 0 per question
+    tool_rounds: int    # tool rounds in the current turn; retrieve resets it to 0 per question
     sources: list[dict]  # guidance retrieved for the current question
     sources_by_turn: Annotated[dict[str, list[dict]], _merge]  # question message id -> its sources, for history
+
+# what history shows under an answer; the passage text is only needed for the current question
+CITATION_KEYS = ("title", "section", "source_url")
+INTERRUPTED = "error: the previous turn ended before this tool returned"
 
 
 def _guidance(sources: list[dict]) -> str:
@@ -41,6 +45,18 @@ def _guidance(sources: list[dict]) -> str:
         return ""
     return "\n\nGuidance retrieved for this question:\n" + "\n".join(
         f"- {s['title']} / {s['section']}: {s['text']}" for s in sources)
+
+
+# a turn cut off mid-tool (closed tab, ollama timeout) leaves tool calls with no results in the checkpoint.
+# the model is sent a stand-in result for each, so every later turn's history stays well formed
+def _answered(messages: list) -> list:
+    answered = {m.tool_call_id for m in messages if isinstance(m, ToolMessage)}
+    out = []
+    for m in messages:
+        out.append(m)
+        out += [ToolMessage(INTERRUPTED, tool_call_id=tc["id"], name=tc["name"])
+                for tc in getattr(m, "tool_calls", None) or [] if tc["id"] not in answered]
+    return out
 
 
 def build_chat_graph(tools: list[BaseTool], *, retrieve: Optional[Callable[[str], list[dict]]] = None,
@@ -51,13 +67,15 @@ def build_chat_graph(tools: list[BaseTool], *, retrieve: Optional[Callable[[str]
     def retrieve_guidance(state: ChatState) -> dict:
         question = next(m for m in reversed(state["messages"]) if isinstance(m, HumanMessage))
         found = retrieve(question.content) if retrieve else []
-        return {"sources": found, "sources_by_turn": {question.id: found}}
+        # the round count is per question: resetting it here means no caller can forget to
+        return {"sources": found, "tool_rounds": 0,
+                "sources_by_turn": {question.id: [{k: s[k] for k in CITATION_KEYS} for s in found]}}
 
     # the system prompt and guidance are sent every call but never stored, so neither goes stale in old threads
     def agent(state: ChatState) -> dict:
         llm = model.bind_tools(tools) if state.get("tool_rounds", 0) < MAX_TOOL_ROUNDS else model
         system = SystemMessage(SYSTEM_PROMPT + _guidance(state.get("sources", [])))
-        return {"messages": [llm.invoke([system] + state["messages"])]}
+        return {"messages": [llm.invoke([system] + _answered(state["messages"]))]}
 
     def run_tools(state: ChatState) -> dict:
         calls = state["messages"][-1].tool_calls

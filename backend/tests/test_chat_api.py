@@ -279,6 +279,29 @@ def test_lock_released_when_client_disconnects(api, model, users):
     assert ask(api).status_code == 200
 
 
+# review on #9: if the browser leaves before starlette starts the body, the body never runs, so it can't
+# be the thing that frees a lock the endpoint took; the lock is only taken once the body starts
+def test_lock_not_held_when_body_never_starts(api, model, users):
+    model.replies.append(AIMessage("later"))
+
+    resp = chat.post_chat(chat.ChatRequest(thread_id="t1", message=QUESTION), users["u-1"])
+    asyncio.run(resp.body_iterator.aclose())
+
+    assert not chat._user_lock("u-1").locked()
+    assert ask(api).status_code == 200
+
+
+# review on #9: text streamed next to a tool call isn't the answer, so an empty final answer is still an error
+def test_empty_answer_after_tool_call_text(api, model):
+    call = tool_call("get_debts")
+    call.content = "Let me check your debts"
+    model.replies += [call, AIMessage(content="")]
+
+    events = read_events(ask(api).text)
+
+    assert events[-1] == ("error", {"message": "The model returned an empty answer. Try rephrasing."})
+
+
 # leaving mid-answer must not stall the server: the model call finishes off the event loop
 def test_disconnect_does_not_block_event_loop(api, model, users):
     model.token_delay = 0.3

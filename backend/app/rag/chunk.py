@@ -23,6 +23,7 @@ class Chunk:
     source_url: str
     topic: str
     fetched_at: str
+    index: int = 0               # position within its own document, the number the id ends in
 
 
 # flat `key: value` lines between `---` fences; split on the first colon only, titles have colons
@@ -106,6 +107,8 @@ def chunk_source(path: Path) -> list[Chunk]:
     front, body = parse_source(path)
     texts = [(heading, text) for heading, paragraphs in _sections(front["title"], body)
              for text in _pack(paragraphs)]
-    return [Chunk(id=f"{path.stem}-{i}", text=text, title=front["title"], section=heading,
-                  source_url=front["source_url"], topic=front["topic"], fetched_at=front["fetched_at"])
+    # sources/foo.md and sources/local/foo.md can both exist (a license change), so local ids get a prefix
+    stem = f"local-{path.stem}" if path.parent.name == "local" else path.stem
+    return [Chunk(id=f"{stem}-{i}", text=text, title=front["title"], section=heading,
+                  source_url=front["source_url"], topic=front["topic"], fetched_at=front["fetched_at"], index=i)
             for i, (heading, text) in enumerate(texts)]

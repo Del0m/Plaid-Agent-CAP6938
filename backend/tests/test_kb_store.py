@@ -36,7 +36,7 @@ class HashEmbeddings(Embeddings):
 
 def chunk(slug, text, n=0, section="Overview"):
     return Chunk(id=f"{slug}-{n}", text=text, title=f"{slug} title", section=section,
-                 source_url=f"https://example.gov/{slug}", topic="t", fetched_at="2026-10-26")
+                 source_url=f"https://example.gov/{slug}", topic="t", fetched_at="2026-10-26", index=n)
 
 
 CHUNKS = [
@@ -124,6 +124,38 @@ def test_failed_rebuild_keeps_previous_kb(tmp_path):
     assert kb.count() == 3
     assert kb.search("credit card apr")[0]["source_url"] == "https://example.gov/apr"
 
+
+# review on #8: a failure while adding (not embedding) must also keep the last good knowledge base
+def test_failed_add_keeps_previous_kb(kb):
+    kb.rebuild(CHUNKS)
+    many = [chunk(f"doc{i}", f"text number {i}") for i in range(40)]
+    many[35] = chunk("doc34", "a duplicate id inside the second batch")   # chroma refuses the batch
+
+    with pytest.raises(Exception):
+        kb.rebuild(many)
+    assert kb.count() == 3
+    assert kb.search("credit card apr")[0]["source_url"] == "https://example.gov/apr"
+    assert kb.rebuild(CHUNKS) == 3     # the half-built collection doesn't block the next rebuild
+
+
+# chunk_index is the chunk's place in its document, not in the whole ingest
+def test_chunk_index_is_per_document(kb):
+    kb.rebuild([chunk("a", "first a", 0), chunk("a", "second a", 1), chunk("b", "first b", 0)])
+
+    got = kb._collection().get(include=["metadatas"])
+    assert dict(zip(got["ids"], (m["chunk_index"] for m in got["metadatas"]))) == {"a-0": 0, "a-1": 1, "b-0": 0}
+
+
+# one source with bad front matter is skipped with a warning; the rest still get indexed
+def test_ingest_skips_a_bad_source(tmp_path, kb, caplog):
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    (sources / "good.md").write_text("---\ntitle: Good\nsource_url: https://example.gov/g\ntopic: t\n"
+                                     "fetched_at: 2026-10-26\n---\n\nSome guidance.\n", encoding="utf-8")
+    (sources / "bad.md").write_text("---\ntitle:  \n---\n\nNo citation.\n", encoding="utf-8")
+
+    assert ingest(tmp_path, kb) == (1, 1)
+    assert "bad.md" in caplog.text
 
 def test_ingest_without_sources_raises(tmp_path, kb):
     with pytest.raises(FileNotFoundError, match="run scripts/fetch_kb.py"):

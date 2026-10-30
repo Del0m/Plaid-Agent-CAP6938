@@ -63,3 +63,26 @@ def test_done_when_account_name():
     out = scrub_account_name("Jane Doe's Checking ••4321")
 
     assert "Jane" not in out and "Doe" not in out and "4321" not in out
+
+
+# review on #6: names a word-based match missed. a bare apostrophe after s, hyphens and O' prefixes
+@pytest.mark.parametrize("raw, clean", [
+    ("James' Checking", "[person]' Checking"),
+    ("Mary-Jane's Savings", "[person]'s Savings"),
+    ("O'Brien's Checking", "[person]'s Checking"),
+    ("THE JONES' JOINT", "[person]' JOINT"),
+])
+def test_account_possessive_unusual_names(raw, clean):
+    assert scrub_account_name(raw) == clean
+
+
+# review on #6: the counterparty is everything after the service, even past a scrubbed token,
+# and with no to/from (bank exports often write "ZELLE JANE DOE" or "Venmo *JaneDoe")
+@pytest.mark.parametrize("raw, clean", [
+    ("Zelle to Jane 1234 Doe", "Zelle to [person] [number]"),
+    ("Zelle to Jane jane@x.com Doe", "Zelle to [person] [email]"),
+    ("ZELLE JANE DOE", "ZELLE [person]"),
+    ("Venmo *JaneDoe", "Venmo *[person]"),
+])
+def test_p2p_whole_counterparty(raw, clean):
+    assert scrub_merchant(raw) == clean
