@@ -9,6 +9,7 @@ from langchain_core.tools import ToolException
 from app import config
 from app.agents.llm import call_with_tools
 from app.agents.tools import PFC_CATEGORIES, make_tools
+from app.db.models import Account, Transaction
 from app.privacy import gateway as gw
 from app.privacy.gateway import PrivacyGateway
 from tests.factories import add_account, add_txn, add_user
@@ -142,6 +143,41 @@ def test_category_list_is_plaids(tools):
     assert "FOOD_AND_DRINK" in tools["get_spending"].description
 
 
+
+# review on #7: with only a start date the gateway fills in today, so a future start is reversed too
+def test_future_start_alone_rejected(tools):
+    with pytest.raises(ToolException, match="before"):
+        tools["get_spending"].invoke({"start_date": "2026-11-01"})
+
+
+# small models send "" for optional arguments they mean to leave out
+def test_empty_string_args_mean_default(tools):
+    out = tools["get_spending"].invoke({"category": "", "start_date": " ", "end_date": ""})
+
+    assert data(out) == {"TRAVEL": 120.0, "FOOD_AND_DRINK": 6.5}
+
+
+# the totals can show UNCATEGORIZED, so the model is told it may ask for it; money in is labelled as such
+def test_description_and_error_name_uncategorized(tools):
+    with pytest.raises(ToolException) as err:
+        tools["get_spending"].invoke({"category": "groceries"})
+
+    assert "UNCATEGORIZED" in str(err.value)
+    assert "UNCATEGORIZED" in tools["get_spending"].description
+    assert "money in" in tools["get_spending"].description
+
+
+# the factory's txn ids must stay unique across sessions, or a second session's rows collide
+def test_factory_txn_ids_unique_across_sessions(db):
+    with db() as s:
+        acct_id = add_account(s, add_user(s, "u-1", "a@example.com"), "Checking").id
+        add_txn(s, s.get(Account, acct_id), 100, "FOOD_AND_DRINK")
+        s.commit()
+    with db() as s:
+        add_txn(s, s.get(Account, acct_id), 200, "FOOD_AND_DRINK")
+        s.commit()
+        assert s.query(Transaction).count() == 2
+
 # tools reach data only through the gateway, so every call is in the audit log
 def test_every_call_is_audited(tools, tmp_path):
     tools["get_accounts"].invoke({})
@@ -198,6 +234,7 @@ def test_live_model_picks_get_debts(seeded, tmp_path):
         tools = make_tools(PrivacyGateway(s, "u-1", audit_path=audit), FakeKB())
         answer = call_with_tools([HumanMessage("Which of my debts has the highest APR?")], tools)
 
-    purposes = [json.loads(l)["purpose"] for l in audit.read_text().splitlines()]
+    # no audit file means the model called no tool; fail on that, not on FileNotFoundError
+    purposes = [json.loads(l)["purpose"] for l in audit.read_text().splitlines()] if audit.exists() else []
     assert "debts" in purposes
     assert "credit card" in answer.content.lower()

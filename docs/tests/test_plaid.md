@@ -36,7 +36,7 @@ The test file has two helpers and one fixture:
 
 ## `test_first_link_stores_item`
 
-**What it does:** Exchanges a token for an item we haven't seen before. It checks that the response is 200 with the new row's id and `synced: true`, and that there's exactly one row with the right `plaid_item_id` and `status == "active"`. It also checks that `access_token_enc` isn't the plaintext token but decrypts back to it.
+**What it does:** Exchanges a token for an item we haven't seen before. It checks that the response is 200 with the new row's id and `synced: false, syncing: true`, and that there's exactly one row with the right `plaid_item_id` and `status == "active"`. It also checks that `access_token_enc` isn't the plaintext token but decrypts back to it.
 
 **Why it's there:** It's the normal first-time link, which nothing else works without. It also checks the privacy rule from section 7 of the architecture doc: access tokens are encrypted at rest.
 
@@ -54,7 +54,7 @@ The test file has two helpers and one fixture:
 
 ## `test_exchange_syncs_new_item`
 
-**What it does:** Exchanges a token for a new item and checks that the response says `synced: true` and that `sync_item` was called once, for that item.
+**What it does:** Exchanges a token for a new item and checks that the response says `syncing: true` and that `sync_item` was called once, for that item.
 
 **Why it's there:** The dashboard reads only from our database. If linking doesn't sync, the user links a bank and then sees an empty page until a webhook or a manual sync arrives. This test makes sure the first sync is part of linking.
 
@@ -66,7 +66,7 @@ The test file has two helpers and one fixture:
 
 ## `test_sync_failure_keeps_item_and_reports_unsynced`
 
-**What it does:** Parametrized over the errors a sync can raise: a `PlaidError`, an `httpx` network error, the `RuntimeError` from pagination that keeps changing, and a `KeyError` standing in for an unexpected Plaid payload or any other bug. For each, the stubbed `sync_item` raises it. The test expects a 200 with `synced: false` and checks that the item row is still stored.
+**What it does:** Parametrized over the errors a sync can raise: a `PlaidError`, an `httpx` network error, the `RuntimeError` from pagination that keeps changing, and a `KeyError` standing in for an unexpected Plaid payload or any other bug. For each, the background `sync_item` raises it. The test expects the queued response (`synced: false, syncing: true`) and checks that the stored item becomes `sync_failed` and appears in the dashboard retry list.
 
 **Why it's there:** By the time the sync runs, the exchange has already succeeded and the access token is valid. Returning an error, or deleting the item, would make the user link the same bank again for a problem that a retry would fix. Any exception counts, not just the expected three, because a 500 here would tell the user that linking failed when the item is in fact stored. The dashboard lists the item under `unsynced_items` and offers a Retry sync button.
 
@@ -84,7 +84,7 @@ The test file has two helpers and one fixture:
 
 ## `test_sandbox_link_end_to_end`
 
-**What it does:** Calls the real Plaid Sandbox, with nothing mocked. It creates a link token through the API, gets a sandbox `public_token` for First Platypus Bank, and exchanges it through `POST /plaid/exchange`, which also runs the real first sync. It then checks that the response says `synced: true`, that one row was stored, and that its decrypted token starts with `access-sandbox-`.
+**What it does:** Calls the real Plaid Sandbox, with nothing mocked. It creates a link token through the API, gets a sandbox `public_token` for First Platypus Bank, and exchanges it through `POST /plaid/exchange`, which also runs the real first sync. It then checks that the response says `syncing: true`, that one row was stored, and that its decrypted token starts with `access-sandbox-`.
 
 **Why it's there:** The other tests mock Plaid, so they pass even if Plaid would reject our request because of a renamed field, a product combination it doesn't allow, or bad credentials. This one confirms that Plaid actually accepts the requests. It's skipped when `.env` is missing `PLAID_CLIENT_ID` or `PLAID_SECRET`, or when `PLAID_ENV` isn't `sandbox`, so the rest of the suite still runs offline.
 
@@ -93,3 +93,10 @@ The test file has two helpers and one fixture:
 ## Not covered
 
 - **Two exchanges for the same item at the same moment.** `/plaid/exchange` catches the unique-constraint error and returns 409. That only happens when another request inserts the item between our lookup and our commit, which can't be reproduced without mocking the lookup, so there's no test for it.
+
+
+## `test_exchange_returns_before_background_sync_and_background_owns_session`
+
+**What it does:** Captures the background task instead of executing it. Exchange returns a queued-sync response with no sync calls yet; the dashboard reports syncing. Executing the task after the request session closes completes the sync in its own session and returns the item to active.
+
+**Why it is there:** Loading a long bank history must not delay the link response beyond the proxy timeout, and background work must not reuse the closed request session.

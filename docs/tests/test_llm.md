@@ -54,7 +54,7 @@ These tests cover `app/agents/llm.py`, the only place the app creates an LLM cli
 
 **What it does:** A tool that raises `ToolException("boom")` is called. The test checks that the model is told `error: boom` and that the loop finishes normally.
 
-**Why it's there:** `ToolException` (and pydantic's argument `ValidationError`) is how a tool tells the model what went wrong, for example "unknown category". The model should get that message and a chance to fix its call, rather than the user getting a server error.
+**Why it's there:** `ToolException` is how a tool tells the model what went wrong, for example "unknown category". The model should get that message and a chance to fix its call, rather than the user getting a server error.
 
 ## `test_generic_exception_message_not_forwarded`
 
@@ -79,6 +79,24 @@ These tests cover `app/agents/llm.py`, the only place the app creates an LLM cli
 **What it does:** Sends the real local model (`OLLAMA_MODEL`, by default `llama3.1:8b`) the message "What is Ada's lucky number? Use the tool." with a recording copy of the toy tool. It checks that the tool was called exactly once with `"Ada"` and that the final answer contains `24`. It's skipped unless `GET {OLLAMA_BASE_URL}/api/tags` responds and lists the model.
 
 **Why it's there:** It's the ticket's done-when on real hardware. The fake-model tests prove the loop is wired correctly, but only a real run shows that this 8B model actually emits tool calls through Ollama. It passed 3 out of 3 runs on 2026-10-21 at temperature 0.
+
+## `test_validation_error_input_not_forwarded`
+
+**What it does:** A tool builds a pydantic model from a value that looks like database data ("Jane Doe's Checking") and fails validation. The test checks that the model gets an `error:` message that doesn't contain "Jane".
+
+**Why it's there:** A pydantic `ValidationError` prints `input_value=...`. When the error comes from a tool's own code building models from database rows, that value is user data, and this loop doesn't go through the privacy gateway. The review on #6 found that these errors were forwarded word for word. Now only a generic "check the tool's argument schema" message reaches the model.
+
+## `test_get_chat_model_sets_context_and_timeout`
+
+**What it does:** Sets `LLM_NUM_CTX` and `LLM_TIMEOUT_SECONDS` in config and checks that the ChatOllama client gets `num_ctx=4096` and `client_kwargs={"timeout": 12.0}`.
+
+**Why it's there:** Ollama's default context is small, and a longer prompt is cut from the front without an error, which drops the system instructions first. And with no timeout, a stuck model blocks the request forever.
+
+## `test_blank_numeric_env_vars_use_defaults`
+
+**What it does:** Sets `LLM_TEMPERATURE`, `LLM_NUM_CTX` and `LLM_TIMEOUT_SECONDS` to empty strings, reloads `app.config`, and checks that each falls back to a valid default. It then reloads config again with the real environment.
+
+**Why it's there:** `.env.example` leaves optional settings blank, and `float("")` raised at import, so a blank value stopped the app, alembic and every test from starting. The numbers now use `os.getenv(...) or default`, like `PROMPT_AUDIT_PATH` already did.
 
 ---
 

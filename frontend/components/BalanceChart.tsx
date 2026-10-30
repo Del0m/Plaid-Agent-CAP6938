@@ -4,9 +4,7 @@ import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 
 import type { Account } from "@/lib/api";
 import { accountLabel, formatCents } from "@/lib/format";
 
-// same split as the backend's ASSET_TYPES / DEBT_TYPES in api/dashboard.py
-const ASSET_TYPES = new Set(["depository", "investment"]);
-const DEBT_TYPES = new Set(["credit", "loan"]);
+// The backend supplies the classification used by its totals, so the chart cannot drift.
 const ASSET_COLOR = "#059669";
 const DEBT_COLOR = "#e11d48";
 
@@ -17,11 +15,11 @@ function shorten(label: string): string {
 
 export default function BalanceChart({ accounts }: { accounts: Account[] }) {
   const rows = accounts
-    .filter((a) => a.current_balance_cents !== null && (ASSET_TYPES.has(a.type) || DEBT_TYPES.has(a.type)))
+    .filter((a) => a.current_balance_cents !== null && a.group !== "other")
     .map((a) => ({
       name: accountLabel(a.name, a.mask),
       value: (a.current_balance_cents ?? 0) / 100,
-      debt: DEBT_TYPES.has(a.type),
+      debt: a.group === "debt",
     }));
 
   if (rows.length === 0) return null;

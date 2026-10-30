@@ -1,5 +1,8 @@
+import importlib
+
 import httpx
 import pytest
+from pydantic import BaseModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import ToolException, tool
 
@@ -163,3 +166,49 @@ def test_live_tool_call_round_trip():
 
     assert calls == ["Ada"]
     assert "24" in answer.content
+
+
+class AccountRow(BaseModel):
+    balance: int
+
+
+@tool
+def strict(name: str) -> int:
+    """Builds a model from a database value, which can fail validation."""
+    AccountRow(balance="Jane Doe's Checking")
+    return 1
+
+
+# a ValidationError raised inside a tool prints input_value, which can be user data from the db
+def test_validation_error_input_not_forwarded():
+    model = ScriptedModel(call("strict", {"name": "x"}), AIMessage("ok"))
+
+    call_with_tools([HumanMessage("x")], [strict], model=model)
+
+    sent = model.seen[1][-1].content
+    assert sent.startswith("error:")
+    assert "Jane" not in sent
+
+
+# without a context size ollama silently cuts long prompts from the front; without a timeout a stuck model hangs
+def test_get_chat_model_sets_context_and_timeout(monkeypatch):
+    monkeypatch.setattr(config, "LLM_NUM_CTX", 4096)
+    monkeypatch.setattr(config, "LLM_TIMEOUT_SECONDS", 12.0)
+
+    m = get_chat_model()
+
+    assert m.num_ctx == 4096
+    assert m.client_kwargs == {"timeout": 12.0}
+
+
+# .env.example blanks optional settings; a blank number must mean "use the default", not crash at import
+def test_blank_numeric_env_vars_use_defaults(monkeypatch):
+    for name in ("LLM_TEMPERATURE", "LLM_NUM_CTX", "LLM_TIMEOUT_SECONDS"):
+        monkeypatch.setenv(name, "")
+    try:
+        importlib.reload(config)
+        assert config.LLM_TEMPERATURE == 0.0
+        assert config.LLM_NUM_CTX > 0 and config.LLM_TIMEOUT_SECONDS > 0
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)
