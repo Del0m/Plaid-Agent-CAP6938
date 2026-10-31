@@ -74,3 +74,26 @@ def test_cli_shows_sync_skipped(db, capsys):
     main(["--user", uid, "--date", "2026-10-20", "--no-sync"], session_factory=db,
          model=ScriptedChatModel(replies=replies()))
     assert "sync: skipped" in capsys.readouterr().out
+
+
+
+def test_cli_awaiting_user(db, capsys, tmp_path, monkeypatch):
+    from app import config
+    monkeypatch.setattr(config, "BUDGET_CHECKPOINT_PATH", tmp_path / "ck.db")
+    with db() as s:
+        uid = seed_profile(s, next(p for p in PLANTED if p.id == "overspend-recurring"))
+    replies = [AIMessage(content=json.dumps({"cause": "recurring", "evidence": "A new gym."})),
+               AIMessage(content=json.dumps({"action": "adjust_next_budget", "message": "Raise it to $135."}))]
+    assert main(["--user", uid, "--date", "2026-10-20", "--no-sync"], session_factory=db,
+                model=ScriptedChatModel(replies=replies)) == 0
+    assert "status: awaiting_user (waiting for alert(s)" in capsys.readouterr().out
+
+
+# review on #13: no test may open (and delete threads in) the developer's real checkpoint file
+def test_tests_never_use_the_real_checkpoint_file():
+    from pathlib import Path
+
+    from app import config
+    real = Path(config.__file__).parent.parent / "data" / "budget_checkpoints.db"
+    assert config.BUDGET_CHECKPOINT_PATH != real
+    assert config.CHAT_CHECKPOINT_PATH != real.with_name("checkpoints.db")

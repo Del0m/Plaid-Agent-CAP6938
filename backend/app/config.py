@@ -43,3 +43,10 @@ CHAT_CHECKPOINT_PATH = Path(os.getenv("CHAT_CHECKPOINT_PATH") or Path(__file__).
 LLM_NUM_PREDICT = int(os.getenv("LLM_NUM_PREDICT") or "1024")
 # seconds the ollama client waits on a response; a cold 14b model on a busy machine can take minutes
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS") or "300")
+
+# the api's single user until real auth. point it at a seeded user's email (e.g. overspend-one-time@eval.local)
+# to run the ui as that user; only the default is created when missing
+DEV_USER_EMAIL = os.getenv("DEV_USER_EMAIL", "dev@localhost")
+
+# langgraph checkpointer for budget runs waiting on the user's approval (git-ignored by *.db)
+BUDGET_CHECKPOINT_PATH = Path(os.getenv("BUDGET_CHECKPOINT_PATH") or Path(__file__).parent.parent / "data" / "budget_checkpoints.db")

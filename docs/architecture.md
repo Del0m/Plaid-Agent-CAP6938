@@ -75,10 +75,19 @@ java -jar plantuml.jar -tsvg docs/diagrams/*.puml
 Refer to `system-design.png` while reading.
 
 ### 4.1 Frontend
-- **Dashboard:** net worth, account balances, debts sorted by APR, and a "budget pace" bar per category (green under 100%, amber 100-110%, red above).
+- **Dashboard:** net worth, account balances, debts sorted by APR, and a **Budget** card with one pace bar per line (TPC-20).
+  - The bar fills with the share of the limit spent, and a marker shows how much of the month has passed.
+  - Colours: amber when the agent flags it for pace, red over the limit, neutral otherwise.
+  - The numbers come live from `GET /budget`. Unbudgeted spending is listed under the bars.
+  - The header links to Alerts, with the pending count.
 - **Plaid Link widget:** `react-plaid-link`. Gets a `link_token` from the backend, returns a `public_token`. Bank credentials go to Plaid only.
 - **Chat UI** (`/chat`): streams tokens over Server-Sent Events from `POST /api/chat`. Shows which tools the agent called (✓/✗ chips) and lists the guidance it was given as clickable sources.
-- **Goals & Alerts:** list of agent alerts with Accept / Dismiss buttons; accepted suggestions feed back into the agent's memory.
+- **Alerts** (`/alerts`, TPC-20):
+  - **Run budget check** (an optional date; blank means today) starts a run in the background, then polls it every 2 s. It reports alerts written, waiting for approval, no budget, or failed.
+  - **Pending** alerts have Accept / Dismiss; decided ones are listed under **History**.
+  - A budget proposal shows the limit the user would accept, and says when a paused run is waiting on it.
+  - Decisions are written back as the advice's outcome, which is the agent's memory.
+- **Goals:** proposed goals with Accept / Dismiss (M4).
 - **Recurring charges:** subscriptions and bills the agent found, with frequency, typical amount, next expected date and a badge for new or price-increased ones.
 - **Cash-flow forecast:** projected checking balance per day to the next paycheck, as a line with a low/high band, the buffer as a reference line, and markers on the days bills land.
 - **Debt payoff:** avalanche vs snowball side by side (months to debt-free, total interest, payoff order), with an "extra per month" input that recomputes both.
@@ -147,6 +156,11 @@ recurring_streams id, user_id, direction (in|out), merchant_key, merchant_name, 
 agent_runs       id, user_id, graph, started_at, finished_at, status, summary_json
 ```
 
+TPC-19 and TPC-20 additions:
+- `alerts.proposed_limit_cents`: set by code for `adjust_next_budget`.
+- `advice_log.alert_id` (FK): the alert the advice became, so the user's decision reaches it as `outcome`.
+- `agent_runs.status` adds `awaiting_user`: a run paused on a budget proposal.
+
 Notes:
 - `plaid_txn_id` is unique so re-syncing is idempotent (upsert).
 - `/transactions/sync` returns `added`, `modified`, `removed`; handle all three. Pending transactions get replaced by posted ones with a new id.
@@ -195,7 +209,12 @@ Use **structured output** (Pydantic models) for `diagnose` and `decide_action` s
 
 **As built (TPC-19):** `agents/budget_graph.py`.
 - **Running it:** `run_budget(session_factory, user_id, today)` runs `sync → load_state → categorize → update_totals → detect_overspend → diagnose → decide_action → log_advice → persist_state`. Sync comes first so a user's first budget is fit on fresh data (it was after `load_state`, so a user with no budget yet was never synced). It skips straight to `persist_state` when there is no budget yet (`no_budget`), when today is past the open period (`period_ended`, left for close), or when nothing is flagged.
-- **State:** plain values (ids, ISO dates, dicts), so TPC-20 can add a checkpointer and `interrupt()`.
+- **State:** plain values (ids, ISO dates, dicts), which LangGraph checkpoints in `data/budget_checkpoints.db` (`BUDGET_CHECKPOINT_PATH`), thread `budget-<run_id>`.
+- **Memory (TPC-20):** for each flag, code reads two facts, which pass through the gateway and never carry message text:
+  - `this_month_alerts`: this period's earlier overspend alerts for the category, as severity, action and status;
+  - `past_advice`: the category's advice from this budget month and the 3 before it, as month, action and outcome.
+
+  The decide prompt opens with the memory check: if the category was already alerted this month and the severity isn't higher, `no_op`; never re-propose a dismissed adjustment. Code adds a one-line summary ("Earlier alerts for this category this month: 1, highest severity high"). The model makes the call.
 - **Diagnosis:** for each flag, `budget_engine/diagnose.py` computes the facts:
   - the largest purchase and its share;
   - its ratio to that merchant's usual month;
@@ -264,6 +283,22 @@ This is `budget_engine/close.py` (`close_period`):
 
 ### 6.6 Human in the loop
 Anything that changes the user's money or their budget without being asked goes through LangGraph's `interrupt()` and becomes an alert with status `pending_user`. The agent proposes; the user disposes.
+
+**As built (TPC-20):**
+- **Pausing.** A run that wrote any `adjust_next_budget` alert goes to `await_approval`, which waits on `interrupt({"waiting_for": [alert ids]})`. The run reads `awaiting_user`. Plain `alert` and `suggest_cuts` alerts don't pause.
+- **Deciding.** `budget_service/alerts.py` `decide_alert`:
+  1. commits the decision on the alert, and as the outcome on its advice rows, in one conditional update (`WHERE status = 'pending_user'`), so two requests for one alert can't both pass the check;
+  2. then resumes the run with `Command(resume=[alert_id, decision])`. A pair, because LangGraph reads a dict resume value as interrupt id → value. No model is built: nothing after the pause calls one.
+
+  Decisions can arrive in any order. The run finishes once all are in, recording them in its summary. If the resume fails, the decision is still saved, and the run stays `awaiting_user`.
+- **The alert rows are the source of truth.** `await_approval` reads each proposal's status from its alert row, and treats a resume as a prompt to look again. So a decision still counts if no resume reached the run: the resume failed, the click landed before the run was marked `awaiting_user`, or two decisions raced. Resumes for one run take a per-run lock. Any paused run whose proposals are already decided is resumed in three places: after `run_budget` marks it `awaiting_user`, after every decision, and whenever `GET /alerts` loads.
+- **Failures and restarts:**
+  - A resume that fails while the thread is still paused leaves the run `awaiting_user`; only a run that got past the pause and then failed is `error`.
+  - A new run id clears any old checkpoint thread first, because SQLite reuses deleted run ids.
+  - A run deletes its checkpoint thread when it finishes. Only a paused run keeps one, because the state holds unscrubbed facts.
+  - `GET /budget/runs/{id}` reports a paused run whose checkpoint is missing or unreadable as `error`, instead of failing or saying it's waiting on 0 proposals.
+  - At startup, budget runs left `running` by a stopped server become `error` ("Interrupted").
+- **Applying.** An accepted proposal isn't applied here. TPC-22's close applies `proposed_limit_cents`, and should treat a proposal never decided as dismissed.
 
 ---
 
@@ -402,9 +437,11 @@ POST /plaid/exchange            { public_token } -> 200
 POST /plaid/webhook             (Plaid calls this)
 GET  /dashboard                 -> balances, net worth, debts by APR (budget pace added in M3)
 GET  /transactions?from&to&category
-GET  /budget/current            -> period + lines
+GET  /budget                     -> live pace: period (or null), days elapsed/in period, lines, unbudgeted (TPC-20)
+POST /budget/run                { date? } -> 202 { run_id }; runs in a background thread; 409 if one is running
+GET  /budget/runs/{id}          -> { status, alert_ids, waiting_for, error }
 POST /budget/lines/{id}         (user override)
-GET  /alerts ; POST /alerts/{id}/accept | /dismiss
+GET  /alerts?status=pending_user|all ; POST /alerts/{id}/accept | /dismiss   (404 other user's, 409 decided)
 GET  /goals ; POST /goals/generate ; POST /goals/{id}/accept
 GET  /recurring                 -> active and stale streams, newest changes first
 GET  /forecast?days=            -> daily expected/low/high balance, scheduled events, buffer, monthly surplus
@@ -474,6 +511,15 @@ Only in Sandbox. Plaid's Transfer product needs separate approval for production
 ## 12. Development workflow tips
 
 - **Sandbox time travel:** Sandbox won't produce new transactions on its own the way a real bank does. For the daily loop, either call `/sandbox/transactions/create` (for dynamic sandbox users) or load the next day's slice from a synthetic fixture. Wrap both behind `POST /admin/sandbox/advance` so you can simulate a month in a minute.
+- **The UI demo (TPC-20):** seed a planted user, run the API as that user, and use the Alerts page:
+
+  ```bash
+  cd backend && ../venv/bin/python scripts/seed_budget_user.py --profile overspend-recurring --replace
+  DEV_USER_EMAIL=overspend-recurring@eval.local ../venv/bin/uvicorn app.main:app
+  # frontend: npm run dev, open /alerts, run on 2026-10-20, accept the $135 proposal, run again (no new alert)
+  ```
+
+  `DEV_USER_EMAIL` makes the single-user API act as that user. Only the default `dev@localhost` is created when missing.
 - **Run graphs by hand:** every graph should be callable from a CLI before you put it on a schedule. The budget agent (TPC-19):
 
   ```bash
@@ -607,7 +653,7 @@ Grow scenarios to ~30-50, run the full metric table, chart results, and write up
 | PII leaks to the LLM | Privacy Gateway allowlist + prompt audit log |
 | Forged Plaid webhooks trigger syncs | Verify the `Plaid-Verification` JWT before going beyond Sandbox (TODO in `api/plaid.py`) |
 | Sandbox data too thin to test the loop | Synthetic fixtures with known ground truth |
-| Over-alerting annoys users | `days_elapsed` guard, dedupe via `advice_log` (TPC-20), false-alarm metric. Until TPC-20, a daily run alerts again on the same overspend. Lumpy flexible spending (a subscription early in the month, weekday counts) raises pace false alarms today (section 6.4) |
+| Over-alerting annoys users | `days_elapsed` guard, the agent's memory of this month's alerts (TPC-20, checked live: the second run on the same overspend is `no_op`), false-alarm metric. Lumpy flexible spending (a subscription early in the month, weekday counts) raises pace false alarms today (section 6.4) |
 | The model's message states a number not in the facts | The prompt says to quote only given numbers. A check that every number in a message appears in the facts is a follow-up, measurable in M5 |
 | Uncategorized transactions | `categorize` only counts them (TPC-19). LLM categorization through a gateway purpose that sends only the scrubbed merchant and amount is a follow-up |
 | Local 8B model fumbles tool calls or JSON | Structured output with Pydantic + retry on parse failure; keep tool count small per graph; test a larger model if needed |
@@ -668,8 +714,14 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-28 | The diagnose prompt checks the causes in order (recurring, then one-time, then seasonal) against facts the code names outright: each merchant's `pattern` (`new` / `started_recently` / `regular`) and the largest purchase's ratio to its merchant's usual month | Live, the model read "seen in 1 earlier month" as new and called the gym `one_time`, and a review probe showed a $520 one-off at a regular shop called `recurring`. With the named facts, all four planted users are right, twice in a row |
 | 2026-10-28 | Only a recurring cause may `adjust_next_budget` (a code guard downgrades the rest to an `alert`); a recurring proposal is the old limit plus the new merchants' typical month | Review, reproduced live: holiday shopping got a $1,600 January limit, and the gym got $205 from a straight-line projection of charges that had already posted. Now it's $135 |
 | 2026-10-30 | Merchant patterns are judged over the history months the user has data for, with a fourth pattern `occasional`; the recurring proposal adds new merchants' typical month to the category's baseline without them; an unreachable model falls back to code-written alerts; sync runs before `load_state` | Review on #12: with short history every merchant was `started_recently` and the proposal counted a merchant already in the median twice; an Ollama outage hid every overspend that day; a user with no budget was never synced |
+| 2026-10-30 | A paused budget run reads its decisions from the alert rows, and any paused run whose proposals are decided is resumed (after the pause is marked, after a decision, on `GET /alerts`), one resume at a time per run | Review on #13: a failed resume, a click before `awaiting_user`, or two racing decisions each left a run waiting forever on an alert that could no longer be decided |
 | 2026-10-28 | `categorize` only counts uncategorized transactions in TPC-19; unbudgeted spending is listed, not alerted | Sandbox and synthetic data are always categorized, and nothing in the done-when exercises it. A category with no line isn't overspent against anything |
 | 2026-10-28 | Initial budgets keep the **median** (× 1.05 for flexible lines) | Measured on five synthetic users: pooled MAPE 7.1% (median) vs 17.7% (mean). The mean is 1-2 points better when there's no outlier but 58.8% vs 9.4% with one trip, and it budgets one-off purchases. `eval/results/2026-10-28/budget_accuracy/` |
+| 2026-10-28 | Only proposals that change the budget (`adjust_next_budget`) pause the run with `interrupt()`; `alert` and `suggest_cuts` don't | Architecture 6.6. Informational alerts have nothing to approve, and a paused run per day would pile up |
+| 2026-10-28 | Deduplication is the model's decision, from memory facts code reads (this month's alerts, recent advice with outcomes; no message text), with the memory check first in the decide prompt and a one-line summary from code | The user's choice: one mechanism. Live on `qwen2.5:14b`, the rule buried in the facts still alerted again twice; with the check first and the summary, the second run is `no_op` twice, and the four planted causes are unchanged |
+| 2026-10-28 | `GET /budget` computes pace live and writes nothing | The bars are current right after a sync; stored values would be as old as the last run |
+| 2026-10-28 | `POST /budget/run` runs in a background thread and returns `202` with the run id; the page polls `GET /budget/runs/{id}` | The Next.js proxy drops a request after 30 s without a byte. FastAPI `BackgroundTasks` start after the response, which needs the run id |
+| 2026-10-28 | `DEV_USER_EMAIL` setting and a run button, for the demo until auth (and TPC-21's scheduler) | The UI can act as a seeded planted user; only the default dev user is ever auto-created, so a typo can't make a stray user |
 | 2026-10-30 | A fixed category's charge in a month's last 3 days, within 10% of its usual bill, counts toward the next month (fit, pace, close and the next-month proposal); history that starts after the 3rd of its first month doesn't fit that month | Review on #15: early rent doubled one month's total, which raised a false over-limit alert and would be adopted at close. A partial first month dragged every median down |
 | | | |
 

@@ -4,10 +4,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import AccountsTable from "@/components/AccountsTable";
 import BalanceChart from "@/components/BalanceChart";
+import BudgetPaceBar from "@/components/BudgetPaceBar";
 import DebtsTable from "@/components/DebtsTable";
 import NetWorthSummary from "@/components/NetWorthSummary";
 import PlaidLinkButton from "@/components/PlaidLinkButton";
-import { errorMessage, getDashboard, syncItem, type Dashboard, type ExchangeResult } from "@/lib/api";
+import {
+  errorMessage, getAlerts, getBudget, getDashboard, syncItem, type Budget, type Dashboard, type ExchangeResult,
+} from "@/lib/api";
+import { categoryLabel, formatCents, formatDate } from "@/lib/format";
 
 function Card({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -31,6 +35,28 @@ export default function DashboardPage() {
   // bumping this re-runs the fetch effect below
   const [reloadKey, setReloadKey] = useState(0);
   const load = useCallback(() => setReloadKey((k) => k + 1), []);
+  // the budget agent (tpc-20): live pace bars, and how many alerts wait on the user. a failure here stays
+  // inside the budget card and never blocks the rest of the dashboard
+  const [budget, setBudget] = useState<Budget | null>(null);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
+  const [pendingAlerts, setPendingAlerts] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    getBudget()
+      .then((b) => {
+        if (cancelled) return;
+        setBudget(b);
+        setBudgetError(null);
+      })
+      .catch((err) => !cancelled && setBudgetError(errorMessage(err)));
+    getAlerts("pending_user")
+      .then((a) => !cancelled && setPendingAlerts(a.length))
+      .catch(() => {}); // the link still works without its count
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
   useEffect(() => {
     let cancelled = false; // drop a response that arrives after a newer fetch started
@@ -91,6 +117,9 @@ export default function DashboardPage() {
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <div className="flex items-center gap-3">
+          <Link href="/alerts" className="text-sm underline underline-offset-2">
+            {pendingAlerts > 0 ? `Alerts (${pendingAlerts})` : "Alerts"}
+          </Link>
           <Link href="/chat" className="text-sm underline underline-offset-2">
             Chat
           </Link>
@@ -169,6 +198,32 @@ export default function DashboardPage() {
       ) : (
         <>
           <NetWorthSummary data={data} />
+          <Card title="Budget">
+            {budgetError ? (
+              <p className="text-sm text-red-600 dark:text-red-400">Couldn&apos;t load your budget: {budgetError}</p>
+            ) : !budget ? (
+              <p className="text-sm text-neutral-500">Loading…</p>
+            ) : budget.period === null && budget.ended_period ? (
+              <p className="text-sm text-neutral-500">
+                Your budget ended on {formatDate(budget.ended_period.end)}. The next month opens when the period closes.
+              </p>
+            ) : budget.period === null ? (
+              <p className="text-sm text-neutral-500">No budget yet. Run a budget check from Alerts.</p>
+            ) : (
+              <div className="space-y-3">
+                {budget.lines.map((line) => (
+                  <BudgetPaceBar key={line.category} line={line} daysElapsed={budget.days_elapsed}
+                    daysInPeriod={budget.days_in_period} />
+                ))}
+                {budget.unbudgeted.length > 0 && (
+                  <p className="text-sm text-neutral-500">
+                    Unbudgeted:{" "}
+                    {budget.unbudgeted.map((u) => `${categoryLabel(u.category)} ${formatCents(u.spent_cents)}`).join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
+          </Card>
           <Card title="Balances">
             <BalanceChart accounts={data.accounts} />
           </Card>

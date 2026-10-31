@@ -165,6 +165,9 @@ class AdviceLog(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     run_id: Mapped[Optional[int]] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    # the alert this advice became, so the user's accept/dismiss reaches it as the outcome
+    alert_id: Mapped[Optional[int]] = mapped_column(ForeignKey("alerts.id", name="fk_advice_log_alert_id_alerts"),
+                                                    index=True)
     category: Mapped[Optional[str]]
     advice_text: Mapped[str]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

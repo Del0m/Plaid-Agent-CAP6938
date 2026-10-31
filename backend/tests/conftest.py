@@ -22,6 +22,21 @@ from app.db.session import get_session
 from app.main import app
 
 
+# every test gets its own checkpoint files: code that opens config's path (the budget cli, the routes' default
+# hooks) must never read or delete threads in the developer's backend/data/*.db
+@pytest.fixture(autouse=True)
+def checkpoint_paths(tmp_path, monkeypatch):
+    from app import config
+    from app.api import budget_hooks, chat
+    monkeypatch.setattr(config, "BUDGET_CHECKPOINT_PATH", tmp_path / "budget_checkpoints.db")
+    monkeypatch.setattr(config, "CHAT_CHECKPOINT_PATH", tmp_path / "checkpoints.db")
+    budget_hooks._sqlite_saver.cache_clear()
+    chat._sqlite_saver.cache_clear()
+    yield
+    budget_hooks._sqlite_saver.cache_clear()
+    chat._sqlite_saver.cache_clear()
+
+
 # fresh in-memory db per test; StaticPool keeps one connection so every session sees the same db
 @pytest.fixture
 def db():

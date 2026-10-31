@@ -292,6 +292,25 @@ def test_diagnose_unnamed_merchant(db, tmp_path):
     assert d["transactions"][0]["merchant"] is None
 
 
+
+def test_diagnose_memory_keys(db, tmp_path):
+    txns = [gm(12, 60000, "ElectroMart")]
+    g, prompt = diagnose_prompt(db, tmp_path, txns)
+    d = data(prompt)
+    assert (d["this_month_alerts"], d["past_advice"]) == ([], [])
+    from app.budget_engine.diagnose import overspend_facts as of
+    flag = PaceResult(category=GM, kind="flexible", limit_cents=15750, spent_cents=60000, days_elapsed=20,
+                      days_in_period=31, pace=None, flagged=True, reason="over_limit")
+    d = data(g.build_context("diagnose", facts=of(flag, None, txns, [], OCT), transactions=txns,
+                             this_month_alerts=[{"severity": "high", "action": "alert", "status": "pending_user",
+                                                 "message": "secret text"}],
+                             past_advice=[{"month": "September 2026", "action": "adjust_next_budget",
+                                           "outcome": "dismissed", "message": "secret text"}]))
+    assert d["this_month_alerts"] == [{"severity": "high", "action": "alert", "status": "pending_user"}]
+    assert d["past_advice"] == [{"month": "September 2026", "action": "adjust_next_budget", "outcome": "dismissed"}]
+    assert "secret text" not in json.dumps(d)
+
+
 # review on #6: transfers and card payments move money that's already counted, so they aren't spending
 def test_spending_leaves_out_transfers_and_card_payments(db, tmp_path):
     with db() as s:

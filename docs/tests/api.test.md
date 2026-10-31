@@ -61,3 +61,25 @@ npm test -- lib/api.test.ts
 **What it does:** Checks that it fetches `/api/chat/t1` and returns the turns unchanged, including each assistant turn's tools and sources.
 
 **Why it's there:** The panel redraws a conversation after a refresh from exactly this data.
+
+## Budget and alerts calls (TPC-20)
+
+`stub(body, status)` makes `fetch` answer every call with a fresh JSON response. A response body can only be read once, so reusing one object would fail on the second call.
+
+## `each call hits its route with the right method and body`
+
+**What it does:** It checks every budget and alerts call's URL, method and body:
+- `GET /api/budget`;
+- `POST /api/budget/run` with `{"date":"2026-10-20"}`, or `{}` with no date;
+- `GET /api/budget/runs/7`;
+- `GET /api/alerts?status=pending_user`, and `?status=all` by default;
+- `POST /api/alerts/3/accept` and `POST /api/alerts/4/dismiss`.
+
+**Why it's there:** These are the field names and routes the backend expects (TPC-20). A typo would only show up as a 404 in the browser.
+
+## `a 409 run reads as its detail`
+
+**What it does:** A `409` from `runBudget` becomes an `ApiError`, and `errorMessage` gives "A budget run is already in progress.".
+
+**Why it's there:** The Alerts page shows the server's message when a run is already going, not "Request failed (409)".
+

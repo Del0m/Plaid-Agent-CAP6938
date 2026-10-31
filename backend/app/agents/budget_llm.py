@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal, Optional, Sequence
 
 import httpx
 from langchain_core.language_models import BaseChatModel
@@ -30,7 +30,12 @@ DIAGNOSE_PROMPT = (
 )
 
 DECIDE_PROMPT = (
-    "You decide what a budgeting app does about one overspent category. Choose exactly one action:\n"
+    "You decide what a budgeting app does about one overspent category.\n"
+    "First check memory, before anything else. If there are earlier alerts for this category this month and "
+    "this flag's severity is not higher than the highest earlier severity (high is higher than medium), the user "
+    "was already told: choose no_op and say in the message that nothing new has happened. Never choose "
+    "adjust_next_budget if past_advice has a dismissed adjust_next_budget.\n"
+    "Otherwise choose exactly one action:\n"
     "- adjust_next_budget: only for a recurring cause, when the higher spending will continue; propose next "
     "month's limit as given.\n"
     "- alert: tell the user about an unusual purchase or burst (usually a one_time cause).\n"
@@ -81,11 +86,23 @@ def invoke_structured(model: BaseChatModel, schema: type[BaseModel], messages: l
     return None
 
 
+# the memory the decide rule turns on, summed up by code so a small model doesn't have to dig it out of the json
+def _earlier(alerts: Sequence[dict]) -> str:
+    if not alerts:
+        return "none"
+    top = max((a["severity"] for a in alerts), key=lambda sev: _RANK.get(sev, 0))
+    return f"{len(alerts)}, highest severity {top}"
+
+
 def diagnose_messages(context: str) -> list:
     return [SystemMessage(DIAGNOSE_PROMPT), HumanMessage(f"Facts:\n{context}")]
 
 
-def decide_messages(context: str, diagnosis: Optional[Diagnosis], projected_cents: int, proposed_cents: int) -> list:
+_RANK = {"medium": 1, "high": 2}
+
+
+def decide_messages(context: str, diagnosis: Optional[Diagnosis], projected_cents: int, proposed_cents: int,
+                    severity: str, earlier: Sequence[dict] = ()) -> list:
     cause = f"{diagnosis.cause}: {diagnosis.evidence}" if diagnosis else "unknown (the cause could not be determined)"
     # a holiday month or a one-off says nothing about next month, so only a recurring cause gets a proposal
     if diagnosis and diagnosis.cause == "recurring":
@@ -93,6 +110,7 @@ def decide_messages(context: str, diagnosis: Optional[Diagnosis], projected_cent
     else:
         proposal = "none: adjust_next_budget is only for a recurring cause"
     return [SystemMessage(DECIDE_PROMPT), HumanMessage(
-        f"Facts:\n{context}\n\nDiagnosis: {cause}\n"
+        f"Facts:\n{context}\n\nDiagnosis: {cause}\nSeverity of this flag: {severity}\n"
+        f"Earlier alerts for this category this month: {_earlier(earlier)}\n"
         f"Projected spending by month end: ${projected_cents / 100:,.2f}\n"
         f"Proposed limit for next month: {proposal}")]
