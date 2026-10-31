@@ -57,7 +57,7 @@ java -jar plantuml.jar -tsvg docs/diagrams/*.puml
 | Backend API | **FastAPI (Python 3.12)** (decided) | LangGraph, ChromaDB and the Plaid Python SDK are all Python, so one language for backend and agents | Node/Express (then agents become a separate service) |
 | Agents | **LangGraph** | Explicit state graphs, checkpointing, `interrupt()` for human approval | Plain tool-use loop, CrewAI |
 | LLM | **Local Llama via Ollama** (`langchain-ollama` `ChatOllama`), behind a single `llm.py` wrapper. Agent model: **`llama3.1:8b`** (`mistral` as a benchmark comparison). Judge model for evals: **`qwen2.5:14b`**. Runs on a MacBook Pro M5, 24 GB (70B models don't fit) | Financial data never leaves your machine; free to run thousands of eval calls; wrapper still lets you swap models for benchmarking | A hosted API (Claude, OpenAI) as a comparison baseline |
-| Embeddings | **`all-MiniLM-L6-v2` (sentence-transformers), run locally** | ChromaDB's default; nothing leaves your machine; same model can score semantic similarity in evals | `nomic-embed-text` via Ollama |
+| Embeddings | **`nomic-embed-text` via Ollama** (decided 2026-10-26), behind `get_embeddings()` in `llm.py` | 8192-token context fits ~500-token chunks; runs on the Ollama server the agent already uses; nothing leaves your machine; same model can score semantic similarity in evals | `all-MiniLM-L6-v2` (Chroma's default, but truncates at 256 word-pieces), `bge-small-en-v1.5` |
 | Vector store | **ChromaDB** (persistent client, local dir) | Required by the proposal; zero ops | pgvector |
 | App DB | **SQLite** in dev, **PostgreSQL** later, via **SQLAlchemy 2 + Alembic** | Start simple; migrations keep the schema honest | Supabase |
 | Agent state | **LangGraph checkpointer** (`SqliteSaver`, then `PostgresSaver`) | Resumable runs, per-user thread memory | Roll your own |
@@ -230,17 +230,19 @@ Implementation steps:
 5. Use Plaid's `client_user_id` = a random UUID, never an email.
 6. Log every prompt the gateway builds (locally) so you can audit what left the system. This log is also great evidence for your report.
 
+**`search_kb` is the one tool that doesn't go through the gateway.** Its results are public guidance with no user data, and its query (written by the model, so it could echo user details) goes only to the local embedding model, so nothing reaches the audit log. Chroma runs with telemetry turned off.
+
 Because the LLM runs locally (Ollama), prompts never leave your machine, which removes the main leak risk from the proposal. Keep the gateway anyway: it still limits what ends up in logs and traces, it keeps prompts small (which matters a lot for an 8B model's accuracy and speed), and it means a hosted model can be swapped in for comparison without a privacy regression. In the report, say clearly that the privacy guarantee comes from local inference *plus* minimization, and that a hosted model would rely on minimization alone.
 
 ---
 
 ## 8. Knowledge base (RAG)
 
-**Sources** (public, citable): CFPB consumer guides, IRS pages on IRA/401(k) limits, investor.gov, FDIC on savings accounts, a couple of well-known methods (avalanche vs snowball debt payoff, 50/30/20). Save them as markdown/HTML in `kb/sources/` with the URL and fetch date in front matter.
+**Sources** (public, citable): 16 pages listed in `kb/sources.json` (`{slug, url, topic, license}`): CFPB consumer guides (including avalanche vs snowball debt payoff), IRS pages on IRAs, Roth accounts and 401(k) limits, investor.gov, FDIC on deposit insurance, and a 50/30/20 guide. `scripts/fetch_kb.py` downloads each page, extracts the article text to markdown with trafilatura, and writes front matter `{title, source_url, topic, fetched_at}`. Tables are flattened to one labeled line per row first (`Contributions — Roth IRA: ...; Pre-tax 401(k): ...`), because trafilatura's markdown tables lost cells on the IRS Roth chart. CFPB's end-of-page boilerplate is dropped. A page under 150 words counts as a failed fetch (a block page or one that renders in JavaScript). US-government pages are public domain and committed in `kb/sources/`, which pins the exact text we cite. The one copyrighted page goes to `kb/sources/local/`, which is git-ignored, so each machine fetches it itself.
 
-**Ingestion** (`scripts/ingest_kb.py`): split into ~500-token chunks with ~50-token overlap, embed, upsert into Chroma with metadata `{source_url, title, topic, fetched_at}`.
+**Ingestion** (`scripts/ingest_kb.py`, code in `app/rag/`): split at markdown headings, then pack paragraphs into ~500-token chunks (375 words) with ~50-token overlap (38 words), never crossing a section. Embed each chunk as `search_document: <title> - <section>\n\n<text>`, the task prefix nomic-embed-text expects, and rebuild the Chroma collection `fin_guidance` (cosine) from scratch each run, with metadata `{source_url, title, section, topic, fetched_at, chunk_index}`. Our code computes every vector; Chroma never runs its own embedding model.
 
-**Retrieval** (`search_kb` tool): top-k=4, return chunk text + source URL. The chat agent should cite sources in answers.
+**Retrieval** (`search_kb` tool): embed the query as `search_query: <query>`, take the top 4, and return `{"purpose": "kb", "results": [{title, source_url, section, text}]}` with no similarity scores. The chat agent should cite the `source_url` in answers. `scripts/search_kb.py "<query>"` prints the same results for checking by hand.
 
 Note on vocabulary: the proposal says "knowledge graph." What's described (LangGraph + ChromaDB, retrieve guidance) is a **vector-store RAG** plus an **agent graph**. That's fine; just use the precise terms in the report. A real knowledge graph (entities + relations) would be an optional extension.
 
@@ -346,7 +348,7 @@ plaid-agent/
 │       │   ├── budget_graph.py
 │       │   ├── close_graph.py
 │       │   └── goal_graph.py
-│       ├── rag/                 # store.py, search.py
+│       ├── rag/                 # chunk.py, fetch.py, store.py
 │       └── scheduler.py
 ├── kb/sources/                  # curated guidance docs
 ├── scripts/ingest_kb.py
@@ -451,6 +453,10 @@ All initial open questions were decided on 2026-10-04 (see the decision log). Ad
 | 2026-10-29 | Linking queues a full sync after the response, with `synced: false, syncing: true`; `plaid_items.status` tracks `syncing`, `sync_failed`, and `active`. The dashboard polls syncing items, and lists failed items even when their transaction cursor was committed. Syncs of one item share a reentrant in-process lock; the API uses one worker. | Slow history cannot time out the link response, partial sync failures stay retryable, and webhook/manual syncs cannot insert the same pages concurrently. Account grouping is returned by the API, and dashboard debt rows use the current account balance. |
 | 2026-10-18 | Net worth = depository + investment minus credit + loan current balances; the debts list = accounts with a `liabilities` row, APR descending, unknown APR last | Matches how Plaid reports balances; the list only shows debts we have APR data for, in avalanche order |
 | 2026-10-18 | Frontend reaches FastAPI through a Next.js `/api/*` rewrite, not CORS | Same origin keeps future auth cookies simple, needs no CORS config, and lets a phone on the LAN use the app without reaching the backend |
+| 2026-10-26 | Embeddings: `nomic-embed-text` via Ollama, not `all-MiniLM-L6-v2` | MiniLM truncates at 256 word-pieces, so half of every ~500-token chunk would never be searchable; nomic's 8192-token context fits them, and it runs on the Ollama server we already need |
+| 2026-10-26 | KB sources fetched by `scripts/fetch_kb.py` from `kb/sources.json` and committed as markdown, except copyrighted pages (git-ignored `kb/sources/local/`) | Reproducible and offline-testable; the committed text is exactly what gets cited; we don't redistribute pages we have no right to |
+| 2026-10-26 | Every ingest drops and rebuilds the `fin_guidance` collection | With ~16 documents it takes seconds, and it can't leave stale or duplicate chunks behind |
+| 2026-10-26 | `search_kb` does not go through the Privacy Gateway | Its results are public text with no user data, and the query only reaches the local embedding model |
 | | | |
 
 ---

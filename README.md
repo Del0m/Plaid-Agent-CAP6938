@@ -29,6 +29,19 @@ To try it: open http://localhost:3000, click **Connect a bank**, pick **First Pl
 
 Linking returns immediately after saving the bank connection; its first full sync runs in the background. The dashboard polls while it is syncing and keeps **Retry sync** available if any step fails, including balances or liabilities. Run one API worker: per-item sync locks serialize webhook, initial and manual syncs within that process.
 
+## Knowledge base
+
+The chat agent's `search_kb` tool reads public financial guidance from a local Chroma store. One-time setup, from `backend/`:
+
+```bash
+ollama pull nomic-embed-text
+../venv/bin/python scripts/fetch_kb.py      # fetches only what isn't in kb/sources/ yet (on a fresh clone: the git-ignored copyrighted page)
+../venv/bin/python scripts/ingest_kb.py     # rebuilds kb/chroma/ from kb/sources/
+../venv/bin/python scripts/search_kb.py "Roth IRA vs 401k"
+```
+
+Run `fetch_kb.py --refresh` to update the saved pages (for example, when the IRS publishes new contribution limits), read the changed files, then ingest again. The sources are listed in `kb/sources.json`.
+
 ## Demo on a phone
 
 Use **Plaid Sandbox data only** for this demo. The app has one unauthenticated dev user: anyone who can reach the LAN address or tunnel can read the dashboard and call its API. Use a trusted network, do not share the tunnel URL publicly, and stop the server/tunnel when the demo ends. Real accounts require authentication and webhook verification first.

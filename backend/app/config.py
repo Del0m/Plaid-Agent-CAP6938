@@ -32,3 +32,8 @@ LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS") or "300")
 PROMPT_AUDIT_PATH = Path(os.getenv("PROMPT_AUDIT_PATH") or Path(__file__).parent.parent / "logs" / "prompt_audit.jsonl")
 # Keep the current log and one rotated backup, both owner-readable/writable only.
 PROMPT_AUDIT_MAX_BYTES = int(os.getenv("PROMPT_AUDIT_MAX_BYTES") or str(8 * 1024 * 1024))
+
+# embedding model for the knowledge base (architecture section 8); agents/llm.py is the only reader
+OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+# knowledge base root: sources.json, sources/ (committed), sources/local/ and chroma/ (git-ignored)
+KB_DIR = Path(os.getenv("KB_DIR") or Path(__file__).parent.parent.parent / "kb")

@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import ToolException, tool
 
 from app import config
-from app.agents.llm import call_with_tools, get_chat_model
+from app.agents.llm import call_with_tools, get_chat_model, get_embeddings
 
 
 # replays canned AIMessages in order and records what it was sent; stands in for ChatOllama
@@ -51,6 +51,15 @@ def test_get_chat_model_overrides():
     m = get_chat_model(temperature=0.7, model="mistral")
 
     assert (m.model, m.temperature) == ("mistral", 0.7)
+
+
+def test_get_embeddings_uses_config(monkeypatch):
+    monkeypatch.setattr(config, "OLLAMA_EMBED_MODEL", "e1")
+    monkeypatch.setattr(config, "OLLAMA_BASE_URL", "http://h:1")
+
+    e = get_embeddings()
+
+    assert (e.model, e.base_url) == ("e1", "http://h:1")
 
 
 # the round trip: model asks for the tool, gets its result as a ToolMessage, answers with it
